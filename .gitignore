@@ -47,7 +47,6 @@ __pycache__/
 *.txt
 *.pdf
 *.xlsx
-*.csv
 *.png
 *.jpg
 .DS_Store

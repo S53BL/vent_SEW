@@ -1,0 +1,21 @@
+# Particijska tabela za ESP32-S3R8 - 16MB Flash, z OTA podporo
+# vent_SEW - Waveshare ESP32-S3-Touch-LCD-2
+#
+# Skupaj: 16MB (0x1000000)
+# Layout:
+#   nvs        : 32KB  - NVS: settings struct, WiFi kredenciali, kalibracija
+#   otadata    : 8KB   - OTA status (katera particija je aktivna)
+#   ota_0      : 6.5MB - Firmware slot 0 (vključno s chart_js.h ~185KB)
+#   ota_1      : 6.5MB - Firmware slot 1 (OTA)
+#   littlefs   : 2.9MB - logi + kamera jpg snapshots + config.json
+#   coredump   : 64KB  - Crash dump
+#
+# Chart.js je C header v firmware (identično REW) - ni ločenega uploadfs
+#
+# Name,     Type, SubType,  Offset,    Size,     Flags
+nvs,        data, nvs,      0x9000,    0x8000,
+otadata,    data, ota,      0x11000,   0x2000,
+ota_0,      app,  ota_0,    0x13000,   0x680000,
+ota_1,      app,  ota_1,    0x693000,  0x680000,
+littlefs,   data, spiffs,   0xD13000,  0x2DC000,
+coredump,   data, coredump, 0xFF0000,  0x10000,
