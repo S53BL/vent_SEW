@@ -2,7 +2,7 @@
 //
 // Senzorji na I2C_Sensors (Wire1, IO33/IO34):
 //   SHT41    (0x44) - temperatura, vlažnost
-//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC 1.4.9.2)
+//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC 1.8.1492)
 //   TCS34725 (0x29) - lux, CCT, RGB
 //   PIR      (IO35) - gibanje → ob detekciji kliče startMotionRecording()
 //
@@ -53,7 +53,7 @@
 #include <Wire.h>
 #include <SensirionI2cSht4x.h>  // FIX (2026-03-02 v2): pravilno ime - malo 'c' in malo 'x'
                                   // NAPACNO bilo: SensirionI2CSht4x.h (velika 'C')
-#include <bsec.h>                   // BSEC-Arduino-library v1.4.9.2
+#include <bsec.h>                   // BSEC-Arduino-library v1.8.1492
 #include <Adafruit_TCS34725.h>
 #include <Preferences.h>
 
@@ -79,11 +79,10 @@ static bool pirLastState = false;
 // ============================================================
 // BSEC subscriptions
 // ============================================================
-static const bsec_virtual_sensor_t bsecSensorList[] = {
+static bsec_virtual_sensor_t bsecSensorList[] = {
     BSEC_OUTPUT_RAW_PRESSURE,
     BSEC_OUTPUT_RAW_TEMPERATURE,
     BSEC_OUTPUT_RAW_HUMIDITY,
-    BSEC_OUTPUT_COMPENSATED_GAS,
     BSEC_OUTPUT_IAQ,
     BSEC_OUTPUT_STATIC_IAQ,
     BSEC_OUTPUT_CO2_EQUIVALENT,
@@ -211,7 +210,7 @@ bool initSensors() {
     // --- SHT41 ---
     if (checkI2CDevice(SHT41_ADDRESS)) {
         sht41 = new SensirionI2cSht4x();  // FIX: tip usklajen s popravljenim headerjem
-        sht41->begin(Wire1);
+        sht41->begin(Wire1, SHT41_ADDRESS);
         sht41->softReset();
         delay(10);
 
@@ -349,7 +348,7 @@ void readSensors() {
             bme680ErrorCount = 0;
             sensorData.err &= ~ERR_BME680;
 
-            sensorData.press     = iaqSensor.rawPressure / 100.0f + settings.pressOffset;
+            sensorData.press     = iaqSensor.pressure / 100.0f + settings.pressOffset;
             sensorData.iaq       = (uint16_t)iaqSensor.iaq;
             sensorData.iaqAccuracy = iaqSensor.iaqAccuracy;
             sensorData.staticIaq = (uint16_t)iaqSensor.staticIaq;
@@ -481,7 +480,7 @@ void performPeriodicSensorCheck() {
     if (!sht41Present && checkI2CDevice(SHT41_ADDRESS)) {
         if (sht41) { delete sht41; sht41 = nullptr; }
         sht41 = new SensirionI2cSht4x();  // FIX: tip usklajen s popravljenim headerjem
-        sht41->begin(Wire1); sht41->softReset(); delay(10);
+        sht41->begin(Wire1, SHT41_ADDRESS); sht41->softReset(); delay(10);
         float t, h;
         if (!sht41->measureHighPrecision(t, h) && t > TEMP_MIN && t < TEMP_MAX) {
             sht41Present = true; sht41ErrorCount = 0;
