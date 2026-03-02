@@ -170,10 +170,7 @@
 #define CAM_SCL_PIN         16   // TWI_CLK (SCCB)
 #define CAM_PWDN_PIN        17   // Power down, active HIGH
 
-// FIX: OV5640_PID safety guard - ni definirano v vseh verzijah esp32-camera
-#ifndef OV5640_PID
-#define OV5640_PID          0x5640
-#endif
+
 
 // -----------------------------------------------------------------------------
 // IMU - QMI8658C, I2C (skupen bus s Touch - I2C bus 0)

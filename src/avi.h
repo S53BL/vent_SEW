@@ -31,7 +31,7 @@
 #define AVI_H
 
 #include <Arduino.h>
-#include <SD.h>
+#include "sd.h"
 #include <stdint.h>
 
 // Max število frameov v idx1 indexu
@@ -122,7 +122,7 @@ public:
     bool close();
 
     // Ali je datoteka odprta?
-    bool isOpen() const { return _file; }
+    bool isOpen() const { return (bool)_file; }
 
     // Statistike
     uint32_t frameCount()  const { return _frameCount; }
@@ -130,7 +130,7 @@ public:
     uint32_t durationSec() const;
 
 private:
-    File     _file;
+    ::File     _file;
     uint16_t _width;
     uint16_t _height;
     uint8_t  _fps;

@@ -2,6 +2,7 @@
 
 #include "avi.h"
 #include "logging.h"
+#include <SD.h>
 
 // =============================================================================
 // Konstruktor / Destruktor

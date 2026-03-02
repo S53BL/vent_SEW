@@ -34,6 +34,7 @@
 #include "globals.h"
 #include "logging.h"
 #include <SPI.h>
+#include <SD.h>
 
 // ============================================================
 // Inicializacija
@@ -215,9 +216,9 @@ void saveSDData() {
 }
 
 // ============================================================
-// readFile() - preberi datoteko (za web vmesnik /sd-file)
+// readFileSD() - preberi datoteko (za web vmesnik /sd-file)
 // ============================================================
-String readFile(const char* path) {
+String readFileSD(const char* path) {
     if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(500)) != pdTRUE) {
         LOG_WARN("SD", "readFile: cannot acquire mutex");
         return "";

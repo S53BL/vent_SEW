@@ -21,9 +21,9 @@ bool initSD();
 void saveSDData();
 
 // Preberi datoteko z SD (za web handler /sd-file)
-String readFile(const char* path);
+String readFileSD(const char* path);
 
 // Vrne JSON seznam datotek v root direktoriju (za web vmesnik)
-String listFiles();
+String listFilesSD();
 
 #endif // SD_SEW_H
