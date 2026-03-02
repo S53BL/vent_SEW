@@ -1,6 +1,15 @@
 // sens.cpp - Sensor module implementation for vent_SEW
 //
-// Senzorji na I2C_Sensors (Wire1, IO48/IO47 - isti bus kot Touch+IMU):
+// POPRAVEK (2026-03-02): VSI senzorji na enem I2C busu (Wire - IO48=SDA, IO47=SCL)
+//   - Wire (IO48=SDA, IO47=SCL): Touch (CST816D) + IMU + SHT41 + BME680 + TCS34725
+//   - Wire1 ODSTRANJEN - ne obstaja več
+//   - initI2CBus() ne kliče Wire.begin() - Touch_Init() v LVGL_Driver.cpp
+//     že inicializira Wire(IO48, IO47) pred klicem initSens()
+//   - Vse Wire1.xxx zamenjano z Wire.xxx
+//
+// Senzorji na Wire (IO48/IO47):
+//   CST816D  (0x15) - touch (inicializira LVGL_Driver.cpp)
+//   QMI8658  (0x6A) - IMU
 //   SHT41    (0x44) - temperatura, vlažnost
 //   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC2 1.8.2600)
 //   TCS34725 (0x29) - lux, CCT, RGB
@@ -23,7 +32,7 @@
 //
 // I2C recovery:
 //   - checkI2CDevice() pred vsakim branjem
-//   - resetI2CBus(): 9x SCL toggle + Wire1.end/begin
+//   - resetI2CBus(): 9x SCL toggle + Wire.end/begin
 //   - error counter: absent po SENSOR_RETRY_COUNT napakah
 //   - performPeriodicSensorCheck(): reconnect vsakih 10 min
 //   - performPeriodicI2CReset(): preventivni reset vsakih 30 min
@@ -34,10 +43,10 @@
 // POPRAVKI (2026-03-02):
 //   - FIX: TCS34725 konstruktor popravljen.
 //     Adafruit_TCS34725 sprejema SAMO 2 parametra (integrationTime, gain).
-//     &Wire1 se NE sme podati konstruktorju - gre v begin().
-//     NAPAČNO: new Adafruit_TCS34725(TIME, GAIN, &Wire1)  ← ne obstaja 3-param konstruktor
+//     &Wire se NE sme podati konstruktorju - gre v begin().
+//     NAPAČNO: new Adafruit_TCS34725(TIME, GAIN, &Wire)  ← ne obstaja 3-param konstruktor
 //     PRAVILNO: new Adafruit_TCS34725(TIME, GAIN)
-//               tcs->begin(TCS_ADDRESS, &Wire1)            ← Wire1 gre sem
+//               tcs->begin(TCS_ADDRESS, &Wire)            ← Wire gre sem
 //     Popravek apliciran na 2 mestih: initSensors() + performPeriodicSensorCheck()
 //
 // POPRAVKI (2026-03-02 v2):
@@ -92,37 +101,38 @@ static bsec_virtual_sensor_t bsecSensorList[] = {
 };
 
 // ============================================================
-// I2C bus init (Wire1 - zunanji senzorji)
+// I2C bus - skupen Wire (IO48/IO47)
+// POZOR: Wire.begin() je že klican v Touch_Init() (LVGL_Driver.cpp)
+//        pred klicem initSens(). Tukaj samo preverimo/nastavimo timeout.
 // ============================================================
 void initI2CBus() {
-    Wire1.begin(I2C_SENS_SDA, I2C_SENS_SCL);
-    Wire1.setClock(I2C_CLOCK_SPEED);
-    Wire1.setTimeout(I2C_TIMEOUT_MS);
-    LOG_INFO("I2C", "Wire1 init %dHz SDA=%d SCL=%d",
-             I2C_CLOCK_SPEED, I2C_SENS_SDA, I2C_SENS_SCL);
+    // Wire je že inicializiran v Touch_Init() z Wire.begin(48, 47, 100000)
+    // Samo nastavi timeout za robustnost
+    Wire.setTimeout(I2C_TIMEOUT_MS);
+    LOG_INFO("I2C", "Wire (shared bus) SDA=IO48 SCL=IO47 - already initialized by Touch_Init");
 }
 
 bool checkI2CDevice(uint8_t address) {
-    Wire1.beginTransmission(address);
-    return (Wire1.endTransmission() == 0);
+    Wire.beginTransmission(address);
+    return (Wire.endTransmission() == 0);
 }
 
 void resetI2CBus() {
     // Standard I2C recovery: 9x SCL toggle
-    pinMode(I2C_SENS_SCL, OUTPUT);
-    pinMode(I2C_SENS_SDA, INPUT);
+    // POZOR: IO47=SCL, IO48=SDA (skupen bus - Touch bo tudi offline med resetom)
+    pinMode(I2C_TOUCH_IMU_SCL, OUTPUT);  // IO47
+    pinMode(I2C_TOUCH_IMU_SDA, INPUT);   // IO48
     for (int i = 0; i < 9; i++) {
-        digitalWrite(I2C_SENS_SCL, LOW);  delayMicroseconds(10);
-        digitalWrite(I2C_SENS_SCL, HIGH); delayMicroseconds(10);
+        digitalWrite(I2C_TOUCH_IMU_SCL, LOW);  delayMicroseconds(10);
+        digitalWrite(I2C_TOUCH_IMU_SCL, HIGH); delayMicroseconds(10);
     }
-    if (digitalRead(I2C_SENS_SDA) == LOW)
+    if (digitalRead(I2C_TOUCH_IMU_SDA) == LOW)
         LOG_ERROR("I2C", "SDA stuck low after recovery!");
-    Wire1.end();
+    Wire.end();
     delay(10);
-    Wire1.begin(I2C_SENS_SDA, I2C_SENS_SCL);
-    Wire1.setClock(I2C_CLOCK_SPEED);
-    Wire1.setTimeout(I2C_TIMEOUT_MS);
-    LOG_INFO("I2C", "Bus reset complete");
+    Wire.begin(I2C_TOUCH_IMU_SDA, I2C_TOUCH_IMU_SCL, 100000);
+    Wire.setTimeout(I2C_TIMEOUT_MS);
+    LOG_INFO("I2C", "Bus reset complete (Wire IO48/IO47)");
 }
 
 // ============================================================
@@ -211,7 +221,7 @@ bool initSensors() {
     // --- SHT41 ---
     if (checkI2CDevice(SHT41_ADDRESS)) {
         sht41 = new SensirionI2cSht4x();  // FIX: tip usklajen s popravljenim headerjem
-        sht41->begin(Wire1, SHT41_ADDRESS);
+        sht41->begin(Wire, SHT41_ADDRESS);
         sht41->softReset();
         delay(10);
 
@@ -232,7 +242,7 @@ bool initSensors() {
 
     // --- BME680 + BSEC ---
     if (checkI2CDevice(BME680_ADDRESS)) {
-        envSensor.begin(BME680_ADDRESS, Wire1);
+        envSensor.begin(BME680_ADDRESS, Wire);
 
         if (envSensor.status != BSEC_OK || envSensor.sensor.status != BME68X_OK) {
             LOG_WARN("BSEC", "begin() failed (bsec=%d bme68x=%d)",
@@ -264,12 +274,12 @@ bool initSensors() {
     // --- TCS34725 ---
     if (checkI2CDevice(TCS_ADDRESS)) {
         // FIX (2026-03-02): Konstruktor sprejema SAMO 2 parametra!
-        // &Wire1 se NIKOLI ne podaja konstruktorju - Adafruit_TCS34725 ga ne sprejema.
-        // Wire1 gre v begin() kot 2. parameter.
-        // NAPAČNO (prej): new Adafruit_TCS34725(TIME, GAIN, &Wire1)
+        // &Wire se NIKOLI ne podaja konstruktorju - Adafruit_TCS34725 ga ne sprejema.
+        // Wire gre v begin() kot 2. parameter.
+        // NAPAČNO (prej): new Adafruit_TCS34725(TIME, GAIN, &Wire)
         // PRAVILNO (zdaj): new Adafruit_TCS34725(TIME, GAIN)
         tcs = new Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_154MS, TCS34725_GAIN_4X);
-        if (tcs->begin(TCS_ADDRESS, &Wire1)) {
+        if (tcs->begin(TCS_ADDRESS, &Wire)) {
             tcsPresent = true;
             tcsErrorCount = 0;
             sensorData.err &= ~ERR_TCS;
@@ -487,7 +497,7 @@ void performPeriodicSensorCheck() {
     if (!sht41Present && checkI2CDevice(SHT41_ADDRESS)) {
         if (sht41) { delete sht41; sht41 = nullptr; }
         sht41 = new SensirionI2cSht4x();  // FIX: tip usklajen s popravljenim headerjem
-        sht41->begin(Wire1, SHT41_ADDRESS); sht41->softReset(); delay(10);
+        sht41->begin(Wire, SHT41_ADDRESS); sht41->softReset(); delay(10);
         float t, h;
         if (!sht41->measureHighPrecision(t, h) && t > TEMP_MIN && t < TEMP_MAX) {
             sht41Present = true; sht41ErrorCount = 0;
@@ -500,7 +510,7 @@ void performPeriodicSensorCheck() {
 
     // BME680 + BSEC
     if (!bme680Present && checkI2CDevice(BME680_ADDRESS)) {
-        envSensor.begin(BME680_ADDRESS, Wire1);
+        envSensor.begin(BME680_ADDRESS, Wire);
         if (envSensor.status == BSEC_OK && envSensor.sensor.status == BME68X_OK) {
             loadBsecState();
             envSensor.updateSubscription(
@@ -521,9 +531,9 @@ void performPeriodicSensorCheck() {
     // TCS34725
     if (!tcsPresent && checkI2CDevice(TCS_ADDRESS)) {
         if (tcs) { delete tcs; tcs = nullptr; }
-        // FIX (2026-03-02): Konstruktor brez &Wire1 (enako kot initSensors zgoraj)
+        // FIX (2026-03-02): Konstruktor brez &Wire (enako kot initSensors zgoraj)
         tcs = new Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_154MS, TCS34725_GAIN_4X);
-        if (tcs->begin(TCS_ADDRESS, &Wire1)) {
+        if (tcs->begin(TCS_ADDRESS, &Wire)) {
             tcsPresent = true; tcsErrorCount = 0;
             sensorData.err &= ~ERR_TCS;
             LOG_INFO("TCS34725", "Reconnected");

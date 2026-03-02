@@ -1,12 +1,21 @@
 // LVGL_Driver.cpp - Waveshare ESP32-S3-Touch-LCD-2
-// 240x320, s touch — Display + Touch driver za LVGL
+// 240x320, s touch — PSRAM buffer + CST816D touch driver
 //
-// POPRAVEK (2026-03-02):
-//   - FIX kritično: NULL draw buffer povzročal StoreProhibited crash → PSRAM alloc
-//   - DODANO: CST816D touch inicializacija (Wire0: SDA=IO48, SCL=IO47, INT=IO46)
-//   - DODANO: lv_indev_drv_t registracija → LVGL dobi touch events
+// POPRAVEK (2026-03-02): DODAN touch input driver za LVGL
+//   - Touch_Init(): inicializira CST816D prek I2C (SDA=IO48, SCL=IO47)
+//   - Touch_Read(): bere koordinate in stanje dotika
+//   - Lvgl_Init(): registrira touch input device pri LVGL (lv_indev_drv_t)
 //
-// Brez touch driverja LVGL ne more prejemati dotikov, čeprav je hardware OK.
+// CST816D protokol:
+//   - I2C naslov: 0x15
+//   - Register 0x01: gesture
+//   - Register 0x02: finger count
+//   - Register 0x03: X high nibble + event
+//   - Register 0x04: X low
+//   - Register 0x05: Y high nibble
+//   - Register 0x06: Y low
+//
+// Brez touch driverja LVGL ne prejme dotikov → event callback-i ne delujejo!
 
 #include "LVGL_Driver.h"
 #include <esp_heap_caps.h>
@@ -17,125 +26,144 @@
   #define LVGL_DRAW_BUF_HEIGHT 60
 #endif
 
-// CST816D I2C naslov in registri
-#define CST816D_I2C_ADDR    0x15
-#define CST816D_REG_GESTURE 0x01
-#define CST816D_REG_FINGER  0x02
-#define CST816D_REG_X_HIGH  0x03
-#define CST816D_REG_X_LOW   0x04
-#define CST816D_REG_Y_HIGH  0x05
-#define CST816D_REG_Y_LOW   0x06
-#define CST816D_REG_CHIP_ID 0xA7
-
-// I2C bus za touch (IO47=SCL, IO48=SDA)
-static TwoWire touchWire = TwoWire(0);
-
-// Zadnje znane koordinate (za LVGL)
-static int16_t touch_last_x = 0;
-static int16_t touch_last_y = 0;
-static bool    touch_pressed = false;
-
 // ============================================================
-// CST816D: init
+// TOUCH - CST816D
 // ============================================================
-static bool cst816d_init(void) {
-    touchWire.begin(TP_SDA_PIN, TP_SCL_PIN, 400000);
 
-    // Preveri chip ID
-    touchWire.beginTransmission(CST816D_I2C_ADDR);
-    touchWire.write(CST816D_REG_CHIP_ID);
-    if (touchWire.endTransmission(false) != 0) {
-        Serial.println("[TOUCH:ERROR] CST816D not found on I2C (0x15)");
-        return false;
+// Inicializacija CST816D touch čipa
+void Touch_Init(void) {
+    Serial.println("[DEBUG] Touch_Init: starting");
+
+    // CST816D reset sequence:
+    // TP_RST je vezan na LCD_RST (IO0) - LCD_Init() ga je že resetiral.
+    // CST816D potrebuje vsaj 50ms po RST HIGH preden odgovori na I2C.
+    // LCD_Init() traja ~300ms skupaj, ampak dodamo še varnostni delay.
+    delay(100);
+
+    // INT pin - CST816D v privzetem modu drži INT LOW ko ni dotika.
+    // Nastavi kot INPUT (brez pull-up - čip ima interni pull-up na INT).
+    pinMode(TOUCH_INT_PIN, INPUT);
+    delay(10);
+
+    // I2C bus 0: Touch + IMU (SDA=IO48, SCL=IO47)
+    // POZOR: Začni s 100kHz - CST816D je zanesljiv pri 100kHz.
+    // 400kHz povzroča timeoutte takoj po resetu.
+    Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN, 100000);
+    delay(50);  // čakaj da se I2C bus stabilizira
+
+    // Preveri prisotnost CST816D (do 3 poskuse)
+    bool found = false;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        Wire.beginTransmission(CST816D_I2C_ADDR);
+        uint8_t err = Wire.endTransmission();
+        if (err == 0) {
+            found = true;
+            break;
+        }
+        Serial.printf("[DEBUG] Touch_Init: attempt %d failed (err=%d), retrying...\n",
+                      attempt + 1, err);
+        delay(50);
     }
-    touchWire.requestFrom((uint8_t)CST816D_I2C_ADDR, (uint8_t)1);
-    if (touchWire.available()) {
-        uint8_t id = touchWire.read();
-        Serial.printf("[TOUCH:INFO] CST816D chip ID: 0x%02X\n", id);
-    }
 
-    // Konfiguriraj INT pin kot vhod
-    pinMode(TP_INT_PIN, INPUT);
-
-    Serial.println("[TOUCH:INFO] CST816D initialized (SDA=48, SCL=47, INT=46)");
-    return true;
-}
-
-// ============================================================
-// CST816D: preberi touch točko
-// ============================================================
-static bool cst816d_read(int16_t* x, int16_t* y) {
-    // Preberi 7 registrov od 0x01 naprej
-    touchWire.beginTransmission(CST816D_I2C_ADDR);
-    touchWire.write(CST816D_REG_GESTURE);
-    if (touchWire.endTransmission(false) != 0) return false;
-
-    uint8_t data[6];
-    uint8_t received = touchWire.requestFrom((uint8_t)CST816D_I2C_ADDR, (uint8_t)6);
-    if (received < 6) return false;
-
-    for (int i = 0; i < 6; i++) data[i] = touchWire.read();
-
-    // data[1] = finger count, data[2..5] = X high/low, Y high/low
-    uint8_t fingers = data[1] & 0x0F;
-    if (fingers == 0) return false;
-
-    uint16_t raw_x = ((data[2] & 0x0F) << 8) | data[3];
-    uint16_t raw_y = ((data[4] & 0x0F) << 8) | data[5];
-
-    // Zaslonska orientacija: portrait 240x320, brez rotacije
-    *x = (int16_t)raw_x;
-    *y = (int16_t)raw_y;
-
-    // Mejne vrednosti
-    if (*x < 0) *x = 0;
-    if (*x >= LCD_WIDTH) *x = LCD_WIDTH - 1;
-    if (*y < 0) *y = 0;
-    if (*y >= LCD_HEIGHT) *y = LCD_HEIGHT - 1;
-
-    return true;
-}
-
-// ============================================================
-// LVGL touch callback
-// ============================================================
-static void lvgl_touch_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
-    (void)drv;
-    int16_t x = 0, y = 0;
-
-    if (cst816d_read(&x, &y)) {
-        touch_last_x = x;
-        touch_last_y = y;
-        touch_pressed = true;
+    if (!found) {
+        Serial.printf("[WARN] Touch_Init: CST816D not found at 0x%02X after 3 attempts\n",
+                      CST816D_I2C_ADDR);
     } else {
-        touch_pressed = false;
+        Serial.printf("[DEBUG] Touch_Init: CST816D found at 0x%02X\n", CST816D_I2C_ADDR);
+
+        // Preberi chip ID (register 0xA7) za verifikacijo
+        Wire.beginTransmission(CST816D_I2C_ADDR);
+        Wire.write(0xA7);
+        if (Wire.endTransmission(false) == 0) {
+            Wire.requestFrom((uint8_t)CST816D_I2C_ADDR, (uint8_t)1);
+            if (Wire.available()) {
+                uint8_t chipId = Wire.read();
+                Serial.printf("[DEBUG] Touch_Init: CST816D chip ID = 0x%02X\n", chipId);
+            }
+        }
+
+        // Nastavi IRQ mode: register 0xFA - kontinuirni mode (0x01)
+        // Da Touch_Read() deluje v polling modu brez interrupt-a
+        Wire.beginTransmission(CST816D_I2C_ADDR);
+        Wire.write(0xFA);  // IrqCtl register
+        Wire.write(0x71);  // EnTest | EnChange | EnMotion | LongPressEn  → redno poroča
+        Wire.endTransmission();
+        delay(10);
     }
 
-    data->point.x = touch_last_x;
-    data->point.y = touch_last_y;
-    data->state   = touch_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    Serial.println("[DEBUG] Touch_Init: done");
 }
 
-// ============================================================
+// Branje touch koordinat za LVGL
+// Vrne true če je dotik aktiven, false sicer
+void Touch_Read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+    (void)drv;
+
+    // Branje 6 registrov od 0x01 naprej
+    Wire.beginTransmission(CST816D_I2C_ADDR);
+    Wire.write(0x01);  // začni pri registru gesture
+    if (Wire.endTransmission(false) != 0) {
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+
+    uint8_t buf[6] = {0};
+    Wire.requestFrom((uint8_t)CST816D_I2C_ADDR, (uint8_t)6);
+    int idx = 0;
+    while (Wire.available() && idx < 6) {
+        buf[idx++] = Wire.read();
+    }
+
+    if (idx < 6) {
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+
+    // buf[0] = gesture (0x00=none, 0x01=up, 0x02=down, 0x03=left, 0x04=right, 0x05=click)
+    // buf[1] = finger count
+    uint8_t fingers = buf[1] & 0x0F;
+
+    if (fingers == 0) {
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+
+    // buf[2] = event (bits 7:6) + X high (bits 3:0)
+    // buf[3] = X low
+    // buf[4] = Y high (bits 3:0)
+    // buf[5] = Y low
+    uint16_t x = ((uint16_t)(buf[2] & 0x0F) << 8) | buf[3];
+    uint16_t y = ((uint16_t)(buf[4] & 0x0F) << 8) | buf[5];
+
+    // Omeji na zaslon (240x320)
+    if (x >= LCD_WIDTH)  x = LCD_WIDTH  - 1;
+    if (y >= LCD_HEIGHT) y = LCD_HEIGHT - 1;
+
+    data->point.x = (lv_coord_t)x;
+    data->point.y = (lv_coord_t)y;
+    data->state   = LV_INDEV_STATE_PR;
+}
+
 // LVGL flush callback — posreduje LVGL buffer na LCD
-// ============================================================
-void Lvgl_Display_LCD(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
+void Lvgl_Display_LCD(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
     LCD_addWindow(area->x1, area->y1, area->x2, area->y2, (uint16_t*)&color_p->full);
     lv_disp_flush_ready(disp_drv);
 }
 
 // ============================================================
-// Inicializacija LVGL + display driver + touch driver
+// LVGL inicializacija + registracija display in touch driverja
 // ============================================================
 void Lvgl_Init(void) {
     Serial.println("[DEBUG] Lvgl_Init: calling lv_init()");
     lv_init();
     Serial.println("[DEBUG] Lvgl_Init: lv_init() done");
 
-    // Izračun velikosti bufferja
+    // --- DISPLAY DRIVER ---
+
     size_t bufSize = LCD_WIDTH * LVGL_DRAW_BUF_HEIGHT * sizeof(lv_color_t);
 
-    // Alociraj buf1 in buf2 v PSRAM
+    Serial.println("[DEBUG] Lvgl_Init: init draw buffer with PSRAM");
+
     lv_color_t* buf1 = (lv_color_t*) heap_caps_malloc(bufSize, MALLOC_CAP_SPIRAM);
     lv_color_t* buf2 = (lv_color_t*) heap_caps_malloc(bufSize, MALLOC_CAP_SPIRAM);
 
@@ -159,10 +187,10 @@ void Lvgl_Init(void) {
     Serial.printf("[DEBUG] Lvgl_Init: buf1=%p buf2=%p size=%u bytes each\n",
                   (void*)buf1, (void*)buf2, bufSize);
 
-    // --- Display driver ---
     static lv_disp_draw_buf_t draw_buf;
     lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LCD_WIDTH * LVGL_DRAW_BUF_HEIGHT);
 
+    Serial.println("[DEBUG] Lvgl_Init: registering display driver");
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res  = LVGL_WIDTH;
@@ -172,18 +200,18 @@ void Lvgl_Init(void) {
     lv_disp_drv_register(&disp_drv);
     Serial.println("[DEBUG] Lvgl_Init: display driver registered");
 
-    // --- Touch driver (CST816D) ---
-    bool touchOK = cst816d_init();
-    if (touchOK) {
-        static lv_indev_drv_t indev_drv;
-        lv_indev_drv_init(&indev_drv);
-        indev_drv.type    = LV_INDEV_TYPE_POINTER;
-        indev_drv.read_cb = lvgl_touch_cb;
-        lv_indev_drv_register(&indev_drv);
-        Serial.println("[TOUCH:INFO] LVGL touch input driver registered");
-    } else {
-        Serial.println("[TOUCH:WARN] Touch driver NOT registered - touch will not work");
-    }
+    // --- TOUCH INPUT DRIVER ---
+    // KLJUČNO: Brez tega LVGL ne prejme nobenih touch eventov!
+
+    Serial.println("[DEBUG] Lvgl_Init: initializing touch (CST816D)");
+    Touch_Init();
+
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type    = LV_INDEV_TYPE_POINTER;  // Touch = pointer tip
+    indev_drv.read_cb = Touch_Read;             // Callback za branje koordinat
+    lv_indev_drv_register(&indev_drv);
+    Serial.println("[DEBUG] Lvgl_Init: touch driver registered");
 
     Serial.println("Lvgl_Init OK (240x320, PSRAM buffer, CST816D touch)");
 }

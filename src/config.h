@@ -177,17 +177,22 @@
 #define QMI8658_ADDR      0x6A   // SA0=GND; ce SA0=3V3 → 0x6B
 
 // -----------------------------------------------------------------------------
-// I2C BUSA
+// I2C BUSA - SKUPEN BUS (IO48=SDA, IO47=SCL)
+// Vsi I2C čipi so na istem busu:
+//   CST816D (0x15) - touch
+//   QMI8658 (0x6A) - IMU
+//   SHT41   (0x44) - temp/hum
+//   BME680  (0x76) - tlak/IAQ
+//   TCS34725(0x29) - svetloba
 // -----------------------------------------------------------------------------
-// Bus 0: Touch (CST816D) + IMU (QMI8658) + Zunanji senzorji (SHT41, BME680, TCS34725)
 #define I2C_TOUCH_IMU_SDA   TP_SDA_PIN   // IO48
 #define I2C_TOUCH_IMU_SCL   TP_SCL_PIN   // IO47
 
-// Zunanji senzorji na istem busu kot Touch/IMU
-#define I2C_SENS_SDA        48   // isti bus kot Touch/IMU (IO48)
-#define I2C_SENS_SCL        47   // isti bus kot Touch/IMU (IO47)
+// Aliasi za senzorje - isti bus!
+#define I2C_SENS_SDA        TP_SDA_PIN   // IO48 (prej IO33 - ODSTRANJENO)
+#define I2C_SENS_SCL        TP_SCL_PIN   // IO47 (prej IO34 - ODSTRANJENO)
 
-#define I2C_CLOCK_SPEED   10000  // 10 kHz - robustno za daljse kable/sum
+#define I2C_CLOCK_SPEED   100000  // 100 kHz - skupen bus, zanesljivo za vse čipe
 #define I2C_TIMEOUT_MS      100
 
 // -----------------------------------------------------------------------------

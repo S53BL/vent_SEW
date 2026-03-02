@@ -26,7 +26,9 @@
  *====================*/
 
 #define LV_COLOR_DEPTH 16
-#define LV_COLOR_16_SWAP 0
+#define LV_COLOR_16_SWAP 1
+// POPRAVEK: ST7789 SPI display zahteva big-endian RGB565 (MSB prvi).
+// Brez tega so bajti zamenjani → napačne barve in slabo berljivo besedilo.
 #define LV_COLOR_SCREEN_TRANSP 0
 #define LV_COLOR_MIX_ROUND_OFS 0
 #define LV_COLOR_CHROMA_KEY lv_color_hex(0x00ff00)
