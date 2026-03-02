@@ -67,7 +67,7 @@ unsigned long lastTouchMs          = 0;
 unsigned long lastConnectionFailMs = 0;
 bool retryAttempted                = false;
 
-// --- SD mutex (logging.cpp in sd.cpp ga rabita) ---
+// --- SD mutex (logging.cpp in sd_card.cpp ga rabita) ---
 SemaphoreHandle_t sdMutex = NULL;
 
 // --- WiFi SSID (main.cpp ga nastavi ob uspešni povezavi) ---

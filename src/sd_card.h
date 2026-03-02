@@ -1,4 +1,4 @@
-// sd.h - SD card module header for vent_SEW
+// sd_card.h - SD card module header for vent_SEW
 //
 // Knjižnica: SD (SPI način) - ker SD deli SPI bus z LCD (IO38/IO39)
 // Pini: MOSI=IO38, SCLK=IO39, MISO=IO40, CS=IO41 (iz config.h)
@@ -7,8 +7,8 @@
 //   sew_YYYY-MM-DD.csv   - senzorske meritve (vsak DATA_SEND_INTERVAL)
 //   log_YYYY-MM-DD.txt   - sistemski logi (logging.cpp)
 
-#ifndef SD_SEW_H
-#define SD_SEW_H
+#ifndef SD_CARD_H
+#define SD_CARD_H
 
 #include <SD.h>
 #include <stdint.h>
@@ -26,4 +26,4 @@ String readFileSD(const char* path);
 // Vrne JSON seznam datotek v root direktoriju (za web vmesnik)
 String listFilesSD();
 
-#endif // SD_SEW_H
+#endif // SD_CARD_H

@@ -31,7 +31,7 @@
 #define AVI_H
 
 #include <Arduino.h>
-#include "sd.h"
+#include "sd_card.h"
 #include <stdint.h>
 
 // Max število frameov v idx1 indexu

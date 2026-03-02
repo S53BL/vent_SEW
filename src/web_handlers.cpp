@@ -23,7 +23,7 @@
 #include "globals.h"
 #include "cam.h"
 #include "logging.h"
-#include "sd.h"
+#include "sd_card.h"
 #include <WiFi.h>
 #include <SD.h>
 #include <esp_heap_caps.h>

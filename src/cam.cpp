@@ -46,7 +46,7 @@
 #include "avi.h"
 #include "globals.h"
 #include "logging.h"
-#include "sd.h"
+#include "sd_card.h"
 #include <esp_camera.h>
 #include <esp_http_server.h>
 #include <esp_timer.h>

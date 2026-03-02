@@ -48,7 +48,7 @@
 //
 // myTZ (ezTime):
 //   - Definiran v globals.cpp, deklariran tukaj
-//   - Uporablja se v logging.cpp, sd.cpp za datum/cas formatiranje
+//   - Uporablja se v logging.cpp, sd_card.cpp za datum/cas formatiranje
 //
 // lastMotionMs (threading):
 //   - MORA biti volatile ker jo bere record_task (FreeRTOS task, Core 1)
@@ -183,7 +183,7 @@ extern Settings   settings;
 
 // --- ezTime ---
 // myTZ je definiran v globals.cpp, inicializiran v main.cpp (myTZ.setLocation)
-// Vsi moduli (logging.cpp, sd.cpp) ga folosijo za datum/cas
+// Vsi moduli (logging.cpp, sd_card.cpp) ga folosijo za datum/cas
 extern Timezone myTZ;
 
 // --- I2C busa ---

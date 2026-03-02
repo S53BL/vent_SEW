@@ -38,7 +38,7 @@
 #include "config.h"
 #include "globals.h"
 #include "logging.h"
-#include "sd.h"
+#include "sd_card.h"
 #include "sens.h"
 #include "http.h"
 #include "cam.h"

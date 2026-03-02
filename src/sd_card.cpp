@@ -1,4 +1,4 @@
-// sd.cpp - SD card module implementation for vent_SEW
+// sd_card.cpp - SD card module implementation for vent_SEW
 //
 // Knjižnica: SD (SPI način) - ker SD deli SPI bus z LCD (IO38/IO39)
 // Plošča:    Waveshare ESP32-S3-Touch-LCD-2
@@ -30,7 +30,7 @@
 //     kot LCD gonilnik in ne inicializira svojega SPI busa.
 //   - listFiles(): popravljen iteracijski vzorec (shrani podatke pred close())
 
-#include "sd.h"
+#include "sd_card.h"
 #include "globals.h"
 #include "logging.h"
 #include <SPI.h>

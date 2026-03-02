@@ -20,7 +20,7 @@
 
 #include "logging.h"
 #include "globals.h"
-#include "sd.h"
+#include "sd_card.h"
 #include <SD.h>
 
 // ============================================================

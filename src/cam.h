@@ -18,7 +18,7 @@
 //
 // Medsebojna odvisnost:
 //   cam.cpp  ↔  globals.h  (sensorData.cameraReady, .isRecording, itd.)
-//   cam.cpp  ↔  sd.cpp     (sdMutex za SD dostop med AVI write)
+//   cam.cpp  ↔  sd_card.cpp (sdMutex za SD dostop med AVI write)
 //   cam.cpp  ↔  avi.h/cpp  (AVI container writer)
 //   cam.cpp  ↔  logging.h  (LOG_INFO/WARN/ERROR)
 //   sens.cpp → cam.cpp     (startMotionRecording() ob PIR trigger)
