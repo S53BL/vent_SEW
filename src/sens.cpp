@@ -2,7 +2,7 @@
 //
 // Senzorji na I2C_Sensors (Wire1, IO33/IO34):
 //   SHT41    (0x44) - temperatura, vlažnost
-//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC 1.8.1492)
+//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC2 1.8.2600)
 //   TCS34725 (0x29) - lux, CCT, RGB
 //   PIR      (IO35) - gibanje → ob detekciji kliče startMotionRecording()
 //
@@ -53,7 +53,7 @@
 #include <Wire.h>
 #include <SensirionI2cSht4x.h>  // FIX (2026-03-02 v2): pravilno ime - malo 'c' in malo 'x'
                                   // NAPACNO bilo: SensirionI2CSht4x.h (velika 'C')
-#include <bsec.h>                   // BSEC-Arduino-library v1.8.1492
+#include <bsec2.h>                   // BSEC-Arduino-library v1.8.2600
 #include <Adafruit_TCS34725.h>
 #include <Preferences.h>
 
@@ -61,7 +61,7 @@
 // Senzorski objekti
 // ============================================================
 static SensirionI2cSht4x* sht41 = nullptr;  // FIX: tip usklajen s popravljenim headerjem
-static Bsec               iaqSensor;   // BSEC objekt (ne pointer - zahteva lib)
+static Bsec2             envSensor; // BSEC objekt (ne pointer - zahteva lib)
 static Adafruit_TCS34725* tcs   = nullptr;
 
 // Error counters
@@ -149,9 +149,9 @@ static void loadBsecState() {
         return;
     }
 
-    iaqSensor.setState(stateBlob);
-    if (iaqSensor.bsecStatus != BSEC_OK) {
-        LOG_WARN("BSEC", "setState failed (status=%d) - starting fresh", iaqSensor.bsecStatus);
+    envSensor.setState(stateBlob);
+    if (envSensor.status != BSEC_OK) {
+        LOG_WARN("BSEC", "setState failed (status=%d) - starting fresh", envSensor.status);
     } else {
         LOG_INFO("BSEC", "State loaded from NVS - calibration continues");
     }
@@ -159,10 +159,10 @@ static void loadBsecState() {
 
 static void saveBsecState() {
     uint8_t stateBlob[BSEC_MAX_STATE_BLOB_SIZE];
-    iaqSensor.getState(stateBlob);
+    envSensor.getState(stateBlob);
 
-    if (iaqSensor.bsecStatus != BSEC_OK) {
-        LOG_WARN("BSEC", "getState failed (status=%d) - not saving", iaqSensor.bsecStatus);
+    if (envSensor.status != BSEC_OK) {
+        LOG_WARN("BSEC", "getState failed (status=%d) - not saving", envSensor.status);
         return;
     }
 
@@ -180,7 +180,7 @@ static void updateBsecState() {
     bool doSave = false;
 
     if (stateUpdateCount == 0) {
-        if (iaqSensor.iaqAccuracy >= 3) {
+        if (envSensor.getOutput(BSEC_OUTPUT_IAQ).accuracy >= 3) {
             doSave = true;
             stateUpdateCount++;
             LOG_INFO("BSEC", "First full calibration reached! Saving state.");
@@ -231,29 +231,29 @@ bool initSensors() {
 
     // --- BME680 + BSEC ---
     if (checkI2CDevice(BME680_ADDRESS)) {
-        iaqSensor.begin(BME680_ADDRESS, Wire1);
+        envSensor.begin(BME680_ADDRESS, Wire1);
 
-        if (iaqSensor.bsecStatus != BSEC_OK || iaqSensor.bme68xStatus != BME68X_OK) {
+        if (envSensor.status != BSEC_OK || envSensor.sensor.status != BME68X_OK) {
             LOG_WARN("BSEC", "begin() failed (bsec=%d bme68x=%d)",
-                     iaqSensor.bsecStatus, iaqSensor.bme68xStatus);
+                     envSensor.status, envSensor.sensor.status);
         } else {
             loadBsecState();
 
-            iaqSensor.updateSubscription(
+            envSensor.updateSubscription(
                 bsecSensorList,
                 sizeof(bsecSensorList) / sizeof(bsecSensorList[0]),
                 BSEC_SAMPLE_RATE_LP
             );
 
-            if (iaqSensor.bsecStatus != BSEC_OK) {
-                LOG_WARN("BSEC", "updateSubscription failed (status=%d)", iaqSensor.bsecStatus);
+            if (envSensor.status != BSEC_OK) {
+                LOG_WARN("BSEC", "updateSubscription failed (status=%d)", envSensor.status);
             } else {
                 bme680Present = true;
                 bme680ErrorCount = 0;
                 sensorData.err &= ~ERR_BME680;
                 LOG_INFO("BSEC", "OK v%d.%d.%d.%d sample_rate=LP",
-                         iaqSensor.version.major, iaqSensor.version.minor,
-                         iaqSensor.version.major_bugfix, iaqSensor.version.minor_bugfix);
+                         envSensor.version.major, envSensor.version.minor,
+                         envSensor.version.major_bugfix, envSensor.version.minor_bugfix);
             }
         }
     } else {
@@ -344,16 +344,16 @@ void readSensors() {
 
     // --- BME680 + BSEC ---
     if (bme680Present) {
-        if (iaqSensor.run()) {
+        if (envSensor.run()) {
             bme680ErrorCount = 0;
             sensorData.err &= ~ERR_BME680;
 
-            sensorData.press     = iaqSensor.pressure / 100.0f + settings.pressOffset;
-            sensorData.iaq       = (uint16_t)iaqSensor.iaq;
-            sensorData.iaqAccuracy = iaqSensor.iaqAccuracy;
-            sensorData.staticIaq = (uint16_t)iaqSensor.staticIaq;
-            sensorData.eCO2      = iaqSensor.co2Equivalent;
-            sensorData.breathVOC = iaqSensor.breathVocEquivalent;
+            sensorData.press       = envSensor.getOutput(BSEC_OUTPUT_RAW_PRESSURE).signal / 100.0f + settings.pressOffset;
+            sensorData.iaq         = (uint16_t)envSensor.getOutput(BSEC_OUTPUT_IAQ).signal;
+            sensorData.iaqAccuracy = envSensor.getOutput(BSEC_OUTPUT_IAQ).accuracy;
+            sensorData.staticIaq   = (uint16_t)envSensor.getOutput(BSEC_OUTPUT_STATIC_IAQ).signal;
+            sensorData.eCO2        = envSensor.getOutput(BSEC_OUTPUT_CO2_EQUIVALENT).signal;
+            sensorData.breathVOC   = envSensor.getOutput(BSEC_OUTPUT_BREATH_VOC_EQUIVALENT).signal;
 
             LOG_INFO("BSEC", "P=%.1fhPa IAQ=%u(acc=%d) sIAQ=%u eCO2=%.0f bVOC=%.2f",
                      sensorData.press,
@@ -363,11 +363,11 @@ void readSensors() {
 
             updateBsecState();
 
-        } else if (iaqSensor.bsecStatus < BSEC_OK || iaqSensor.bme68xStatus < BME68X_OK) {
+        } else if (envSensor.status < BSEC_OK || envSensor.sensor.status < BME68X_OK) {
             bme680ErrorCount++;
             sensorData.err |= ERR_BME680;
             LOG_WARN("BSEC", "Error (bsec=%d bme68x=%d count=%d/%d)",
-                     iaqSensor.bsecStatus, iaqSensor.bme68xStatus,
+                     envSensor.status, envSensor.sensor.status,
                      bme680ErrorCount, SENSOR_RETRY_COUNT);
             if (bme680ErrorCount >= SENSOR_RETRY_COUNT) {
                 bme680Present = false; bme680ErrorCount = 0;
@@ -493,21 +493,21 @@ void performPeriodicSensorCheck() {
 
     // BME680 + BSEC
     if (!bme680Present && checkI2CDevice(BME680_ADDRESS)) {
-        iaqSensor.begin(BME680_ADDRESS, Wire1);
-        if (iaqSensor.bsecStatus == BSEC_OK && iaqSensor.bme68xStatus == BME68X_OK) {
+        envSensor.begin(BME680_ADDRESS, Wire1);
+        if (envSensor.status == BSEC_OK && envSensor.sensor.status == BME68X_OK) {
             loadBsecState();
-            iaqSensor.updateSubscription(
+            envSensor.updateSubscription(
                 bsecSensorList,
                 sizeof(bsecSensorList) / sizeof(bsecSensorList[0]),
                 BSEC_SAMPLE_RATE_LP
             );
-            if (iaqSensor.bsecStatus == BSEC_OK) {
+            if (envSensor.status == BSEC_OK) {
                 bme680Present = true; bme680ErrorCount = 0;
                 sensorData.err &= ~ERR_BME680;
                 LOG_INFO("BSEC", "BME680 reconnected, state restored");
             }
         } else {
-            LOG_WARN("BSEC", "BME680 reconnect failed (bsec=%d)", iaqSensor.bsecStatus);
+            LOG_WARN("BSEC", "BME680 reconnect failed (bsec=%d)", envSensor.status);
         }
     }
 
