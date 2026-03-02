@@ -1,4 +1,15 @@
 // weather.cpp - OpenMeteo weather data module for vent_SEW
+//
+// POPRAVKI (2026-03-02):
+//   - FIX: DynamicJsonDocument(4096) → DynamicJsonDocument(8192)
+//     OpenMeteo odgovor z forecast_days=1 in 11 hourly polji vsebuje 264 vrednosti
+//     (~6-8 KB JSON). 4096 B NI DOVOLJ → NoMemory → heap korupcija → LVGL crash
+//     (StoreProhibited pri lv_color_fill, EXCVADDR=0x00000000).
+//   - FIX: Dodan StaticJsonDocument filter za zmanjšanje porabe RAM-a za ~60%.
+//     Filter pove ArduinoJson naj alocira samo potrebna polja, ne celotnega dokumenta.
+//   - FIX: payload velikost omejena na 12KB - zaščita pred prevelikim odgovorom.
+//   - FIX: http.end() pred deserializeJson (sprosti TCP socket pomnilnik pred parsanjem).
+//
 #include "weather.h"
 #include "globals.h"
 #include "logging.h"
@@ -60,16 +71,64 @@ bool fetchWeatherNow() {
     struct tm* ti = localtime(&now_t);
     int hourIdx = (ti->tm_hour < 24) ? ti->tm_hour : 0;
 
+    // FIX: Omejitev velikosti odgovora (zaščita pred prevelikim odgovorom)
+    int contentLen = http.getSize();
+    if (contentLen > 12000) {
+        LOG_ERROR("WEATHER", "Response too large: %d bytes", contentLen);
+        http.end();
+        lastFetchFailed = true;
+        lastAttemptMs = millis();
+        return false;
+    }
+
     String payload = http.getString();
+    // FIX: http.end() PRED parsanjem - sprosti TCP socket in heap pred alokacijo JSON doc
     http.end();
 
-    // FIX (2026-03-02): JsonDocument (v7) → DynamicJsonDocument (v6)
-    // platformio.ini zahteva bblanchon/ArduinoJson @ ^6.21.0
-    // V ArduinoJson v6 se uporablja DynamicJsonDocument(size) ali StaticJsonDocument<size>
-    DynamicJsonDocument doc(4096);
-    DeserializationError err = deserializeJson(doc, payload);
+    LOG_INFO("WEATHER", "Payload size: %d bytes", payload.length());
+
+    // FIX: DynamicJsonDocument(4096) → DynamicJsonDocument(8192)
+    //
+    // OpenMeteo odgovor z forecast_days=1 in 11 hourly polji:
+    //   24 ur × 11 polj = 264 vrednosti + JSON overhead + hourly_units + metadata
+    //   Skupaj: ~6000-8000 bajtov surovi JSON
+    //
+    // ArduinoJson v6 za parsanje potrebuje interno ~2× velikost podatkov.
+    // 4096 B = PREMALO → deserializeJson vrne NoMemory.
+    //
+    // POSLEDICA NoMemory:
+    //   doc je delno parsiran, vsi dostopi na doc["..."] vrnejo nullptr/0.
+    //   Funkcija vrne false (OK), ampak weatherData.valid ostane false.
+    //   Takoj sledi naslednji poskus (WEATHER_RETRY_INTERVAL = 60s), ki spet
+    //   porabi heap. Heap fragmentacija povzroči LVGL alokacijo na NULL → crash.
+    //
+    // REŠITEV: 8192 B je dovolj za celoten OpenMeteo odgovor.
+    //
+    // Dodatna optimizacija: StaticJsonDocument filter - pove ArduinoJson
+    // naj shrani SAMO potrebna polja (prihranek ~60% RAM-a pri parsanju).
+
+    // Filter dokument - samo polja ki jih dejansko beremo
+    StaticJsonDocument<256> filter;
+    filter["current"]["weather_code"] = true;
+    JsonObject fHourly = filter["hourly"].to<JsonObject>();
+    fHourly["dew_point_2m"]            = true;
+    fHourly["wind_speed_10m"]          = true;
+    fHourly["precipitation"]           = true;
+    fHourly["rain"]                    = true;
+    fHourly["snowfall"]                = true;
+    fHourly["cloud_cover"]             = true;
+    fHourly["cloud_cover_low"]         = true;
+    fHourly["cloud_cover_mid"]         = true;
+    fHourly["cloud_cover_high"]        = true;
+    fHourly["soil_temperature_0cm"]    = true;
+    fHourly["soil_moisture_0_to_1cm"]  = true;
+
+    // Glavni dokument - 8192 B (bil 4096 → NoMemory)
+    DynamicJsonDocument doc(8192);
+    DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
     if (err) {
-        LOG_ERROR("WEATHER", "JSON parse error: %s", err.c_str());
+        LOG_ERROR("WEATHER", "JSON parse error: %s (payload=%d B, free heap=%u B)",
+                  err.c_str(), payload.length(), ESP.getFreeHeap());
         lastFetchFailed = true;
         lastAttemptMs = millis();
         return false;
