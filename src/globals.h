@@ -6,7 +6,7 @@
 //
 // IDENTITETA ENOTE:
 //   - Vsak SEW ima unikatni ID (npr. "SEW1", "SEW2", ...) shranjen v NVS
-//   - Vsak SEW ima staticni IP shranjen v NVS (npr. 192.168.2.191, .192, ...)
+//   - Vsak SEW ima staticni IP shranjen v NVS (npr. 192.168.2.195, .196, ...)
 //   - ID in IP se nastavljata preko web vmesnika (Settings stran)
 //   - Firmware je identicen za vse SEW enote - razlikujejo se samo po NVS
 //
@@ -30,8 +30,8 @@
 //   - Uporablja se za graphAddPoint() klic SAMO ob dejansko novem branju
 //
 // I2C BUSA:
-//   - Wire  (bus 0, IO48/IO47): Touch CST816D + IMU QMI8658 (interni)
-//   - Wire1 (bus 1, IO33/IO34): Zunanji senzorji SHT41, BME680, TCS34725
+//   - Wire  (bus 0, IO48/IO47): Touch CST816D + IMU QMI8658 + Zunanji senzorji (SHT41, BME680, TCS34725)
+//   - Wire1 (bus 1): NI VEČ V UPORABI (IO33/IO34 nista dostopni na konektorjih P1/P2)
 //
 // STORAGE:
 //   - NVS "sew_cfg"  : unitId, IPs, kalibracija, settings
@@ -127,7 +127,7 @@ struct Settings {
     // --- Identiteta enote ---
     char unitId[8];         // "SEW1".."SEW9"
 
-    // --- Omrezje (kot string, npr. "192.168.2.191") ---
+    // --- Omrezje (kot string, npr. "192.168.2.195") ---
     char localIP[16];       // Staticni IP te enote
     char gateway[16];       // Gateway, npr. "192.168.2.1"
     char rewIP[16];         // IP REW enote, privzeto REW_IP
@@ -167,7 +167,7 @@ struct Settings {
 
 // --- Privzete vrednosti ---
 #define SETTINGS_DEFAULT_UNIT_ID        "SEW1"
-#define SETTINGS_DEFAULT_LOCAL_IP       "192.168.2.191"
+#define SETTINGS_DEFAULT_LOCAL_IP       "192.168.2.195"
 #define SETTINGS_DEFAULT_GATEWAY        "192.168.2.1"
 #define SETTINGS_DEFAULT_REW_IP         REW_IP
 #define SETTINGS_DEFAULT_BRIGHTNESS     512
@@ -188,7 +188,7 @@ extern Timezone myTZ;
 
 // --- I2C busa ---
 extern TwoWire& I2C_Internal;   // = Wire,  IO48/IO47 (Touch + IMU)
-extern TwoWire& I2C_Sensors;    // = Wire1, IO33/IO34 (zunanji senzorji)
+extern TwoWire& I2C_Sensors;    // = Wire1, IO48/IO47 (zunanji senzorji - isti bus kot Touch+IMU)
 
 // --- Cas ---
 extern bool timeSynced;

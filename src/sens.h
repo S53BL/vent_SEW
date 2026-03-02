@@ -1,10 +1,10 @@
 // sens.h - Sensor module header for vent_SEW
 //
 // Senzorji:
-//   SHT41    (0x44) - temperatura, vlažnost          → I2C bus 1 (Wire1, IO33/IO34)
-//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC     → I2C bus 1 (Wire1, IO33/IO34)
-//   TCS34725 (0x29) - svetloba (lux), CCT, RGB       → I2C bus 1 (Wire1, IO33/IO34)
-//   PIR      (IO35) - gibanje (digitalni vhod)
+//   SHT41    (0x44) - temperatura, vlažnost          → I2C bus 0 (Wire1, IO48/IO47)
+//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC     → I2C bus 0 (Wire1, IO48/IO47)
+//   TCS34725 (0x29) - svetloba (lux), CCT, RGB       → I2C bus 0 (Wire1, IO48/IO47)
+//   PIR      (IO18) - gibanje (digitalni vhod) - P1:6
 //
 // I2C bus recovery:
 //   - checkI2CDevice() pred vsakim branjem

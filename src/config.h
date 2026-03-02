@@ -82,11 +82,8 @@
 //  ┌─────────────────────────────────────────────────────────────────────────┐
 //  │  SPLOŠNI GPIO (prosti pini za senzorje in V/I)                          │
 //  ├─────────────┬───────────────────────────────────────────────────────────┤
-//  │  IO33       │ I2C SDA zunanji senzorji (Wire1)                         │
-//  │  IO34       │ I2C SCL zunanji senzorji (Wire1)                         │
-//  │  IO35       │ PIR senzor gibanja (digitalni vhod)                      │
-//  │  IO36       │ Status LED (digitalni izhod)                             │
-//  │  IO37       │ Rezerva digitalni V/I                                    │
+//  │  IO18       │ PIR senzor gibanja (digitalni vhod) - P1:6               │
+//  │  IO47/IO48  │ I2C bus 0: Touch + IMU + zunanji senzorji                │
 //  │  IO43       │ U0TXD - UART0 TX (Serial, USB-CDC)                        │
 //  │  IO44       │ U0RXD - UART0 RX (Serial, USB-CDC)                        │
 //  └─────────────┴──────────────────────────────────────────────────────────┘
@@ -94,12 +91,13 @@
 //  ┌─────────────────────────────────────────────────────────────────────────┐
 //  │  I2C RAZPOREDITEV - POZOR: 2 ločena busa!                              │
 //  ├─────────────┬───────────────────────────────────────────────────────────┤
-//  │  I2C_BUS_0  │ SDA=IO48, SCL=IO47 → Touch (CST816D) + IMU (QMI8658)     │
-//  │  I2C_BUS_1  │ SDA=IO33, SCL=IO34 → Zunanji senzorji (SHT41, BME680...) │
+//  │  I2C_BUS_0  │ SDA=IO48, SCL=IO47 → Touch (CST816D) + IMU (QMI8658) + Zunanji senzorji (SHT41, BME680, TCS34725) │
+//  │  I2C_BUS_1  │ NI VEČ V UPORABI (IO33/IO34 nista na konektorju P1/P2)    │
 //  └─────────────┴──────────────────────────────────────────────────────────┘
 //
 //  OPOMBA: IO18, IO19, IO20 = USB D-, D+ (ne uporabljati!)
 //  OPOMBA: IO0 = BOOT tipka / LCD_RST (paziti pri zagonu)
+//  OPOMBA: IO33-IO37 niso fizično dostopni na konektorjih P1/P2!
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -181,13 +179,13 @@
 // -----------------------------------------------------------------------------
 // I2C BUSA
 // -----------------------------------------------------------------------------
-// Bus 0: Touch (CST816D) + IMU (QMI8658)
+// Bus 0: Touch (CST816D) + IMU (QMI8658) + Zunanji senzorji (SHT41, BME680, TCS34725)
 #define I2C_TOUCH_IMU_SDA   TP_SDA_PIN   // IO48
 #define I2C_TOUCH_IMU_SCL   TP_SCL_PIN   // IO47
 
-// Bus 1: Zunanji senzorji (SHT41, BME680, TCS34725)
-#define I2C_SENS_SDA        33
-#define I2C_SENS_SCL        34
+// Zunanji senzorji na istem busu kot Touch/IMU
+#define I2C_SENS_SDA        48   // isti bus kot Touch/IMU (IO48)
+#define I2C_SENS_SCL        47   // isti bus kot Touch/IMU (IO47)
 
 #define I2C_CLOCK_SPEED   10000  // 10 kHz - robustno za daljse kable/sum
 #define I2C_TIMEOUT_MS      100
@@ -195,12 +193,7 @@
 // -----------------------------------------------------------------------------
 // ZUNANJA APLIKACIJSKA GPIO (SEW specificno)
 // -----------------------------------------------------------------------------
-#define PIR_PIN             35   // PIR senzor gibanja, digitalni vhod
-#define STATUS_LED_PIN      36   // Status LED, digitalni izhod
-#define GPIO_EXT1_PIN       37   // Rezerva
-
-// Kompatibilnostni alias (stara koda)
-#define MOTION_SENSOR_PIN   PIR_PIN
+#define PIR_PIN             18   // P1:6 - edini prosti pin na konektorju
 
 // -----------------------------------------------------------------------------
 // BATERIJA
@@ -209,7 +202,7 @@
 #define BAT_VOLTAGE_DIVIDER  3.0f   // Delilnik 200K/100K
 
 // -----------------------------------------------------------------------------
-// SENZORJI - I2C naslovi (na I2C bus 1)
+// SENZORJI - I2C naslovi (na I2C bus 0)
 // -----------------------------------------------------------------------------
 #define SHT41_ADDRESS       0x44
 #define BME680_ADDRESS      0x76   // SDO=GND (BSEC privzeto)

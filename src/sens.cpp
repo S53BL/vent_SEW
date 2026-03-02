@@ -1,10 +1,10 @@
 // sens.cpp - Sensor module implementation for vent_SEW
 //
-// Senzorji na I2C_Sensors (Wire1, IO33/IO34):
+// Senzorji na I2C_Sensors (Wire1, IO48/IO47 - isti bus kot Touch+IMU):
 //   SHT41    (0x44) - temperatura, vlažnost
 //   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC2 1.8.2600)
 //   TCS34725 (0x29) - lux, CCT, RGB
-//   PIR      (IO35) - gibanje → ob detekciji kliče startMotionRecording()
+//   PIR      (IO18) - gibanje → ob detekciji kliče startMotionRecording()
 //
 // newSensorData flag:
 //   - Po vsakem uspešnem readSensors() se postavi na true
