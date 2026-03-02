@@ -1,0 +1,79 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.pio/build/
+.pio/libdeps/
+.ico
+
+
+# VS Code
+.vscode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/c_cpp_properties.json   # ← če ga hočeš vključiti v repozitorij
+
+# Build in začasne datoteke
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+*.sym
+*.eep
+*.d
+*.o
+*.a
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.so
+*.dll
+
+
+# Logi in dokumentacija 
+*.log
+*.bak
+*.swp
+*.swo
+*.MD
+*.md
+*.docx
+*.doc
+*.txt
+*.pdf
+*.xlsx
+*.csv
+.DS_Store
+Thumbs.db
+
+# Občutljive datoteke 
+secrets*
+**/wifi_config.h        
+src/wifi_config.h  # ← 
+*.key
+*.pem
+*.crt
+*.env
+.env*
+
+# Arduino/PlatformIO cache
+.pio/cache/
+.pio/tmp/
+
+# Drugo, kar se pogosto pojavi
+.idea/
+*.code-workspace
+
+# Temporary project folders
+vent_CEE_temp/
+vent_DEW_temp/
+vent_SEW_temp/
+vent_REW_fail/
+vent_*
+nove_ico/
+nide.zip
