@@ -49,6 +49,7 @@ __pycache__/
 *.xlsx
 *.png
 *.jpg
+*.old
 .DS_Store
 Thumbs.db
 

@@ -10,10 +10,6 @@ void Lvgl_Display_LCD(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t
     lv_disp_flush_ready(disp_drv);
 }
 
-// LVGL tick — klic iz esp_timer vsake 2ms
-void example_increase_lvgl_tick(void *arg) {
-    lv_tick_inc(EXAMPLE_LVGL_TICK_PERIOD_MS);
-}
 
 // Inicializacija LVGL + display driver
 // Uporabi PSRAM za draw buffer
@@ -36,16 +32,6 @@ void Lvgl_Init(void) {
     lv_disp_drv_register(&disp_drv);
     Serial.println("[DEBUG] Lvgl_Init: display driver registered");
 
-    // LVGL tick timer — esp_timer vsake 2ms
-    const esp_timer_create_args_t tick_args = {
-        .callback = &example_increase_lvgl_tick,
-        .name     = "lvgl_tick"
-    };
-    esp_timer_handle_t tick_timer = NULL;
-    Serial.println("[DEBUG] Lvgl_Init: creating timer");
-    esp_timer_create(&tick_args, &tick_timer);
-    esp_timer_start_periodic(tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000);
-    Serial.println("[DEBUG] Lvgl_Init: timer started");
 
     Serial.println("Lvgl_Init OK (240x320, PSRAM buffer)");
 }
