@@ -180,7 +180,8 @@ static void updateBsecState() {
     bool doSave = false;
 
     if (stateUpdateCount == 0) {
-        if (envSensor.getOutput(BSEC_OUTPUT_IAQ).accuracy >= 3) {
+        bsecData iaqData = envSensor.getData(BSEC_OUTPUT_IAQ);
+        if (iaqData.accuracy >= 3) {
             doSave = true;
             stateUpdateCount++;
             LOG_INFO("BSEC", "First full calibration reached! Saving state.");
@@ -348,12 +349,18 @@ void readSensors() {
             bme680ErrorCount = 0;
             sensorData.err &= ~ERR_BME680;
 
-            sensorData.press       = envSensor.getOutput(BSEC_OUTPUT_RAW_PRESSURE).signal / 100.0f + settings.pressOffset;
-            sensorData.iaq         = (uint16_t)envSensor.getOutput(BSEC_OUTPUT_IAQ).signal;
-            sensorData.iaqAccuracy = envSensor.getOutput(BSEC_OUTPUT_IAQ).accuracy;
-            sensorData.staticIaq   = (uint16_t)envSensor.getOutput(BSEC_OUTPUT_STATIC_IAQ).signal;
-            sensorData.eCO2        = envSensor.getOutput(BSEC_OUTPUT_CO2_EQUIVALENT).signal;
-            sensorData.breathVOC   = envSensor.getOutput(BSEC_OUTPUT_BREATH_VOC_EQUIVALENT).signal;
+            bsecData pressData = envSensor.getData(BSEC_OUTPUT_RAW_PRESSURE);
+            bsecData iaqData = envSensor.getData(BSEC_OUTPUT_IAQ);
+            bsecData staticIaqData = envSensor.getData(BSEC_OUTPUT_STATIC_IAQ);
+            bsecData co2Data = envSensor.getData(BSEC_OUTPUT_CO2_EQUIVALENT);
+            bsecData bvocData = envSensor.getData(BSEC_OUTPUT_BREATH_VOC_EQUIVALENT);
+            
+            sensorData.press       = pressData.signal / 100.0f + settings.pressOffset;
+            sensorData.iaq         = (uint16_t)iaqData.signal;
+            sensorData.iaqAccuracy = iaqData.accuracy;
+            sensorData.staticIaq   = (uint16_t)staticIaqData.signal;
+            sensorData.eCO2        = co2Data.signal;
+            sensorData.breathVOC   = bvocData.signal;
 
             LOG_INFO("BSEC", "P=%.1fhPa IAQ=%u(acc=%d) sIAQ=%u eCO2=%.0f bVOC=%.2f",
                      sensorData.press,
