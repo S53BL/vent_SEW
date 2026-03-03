@@ -95,7 +95,7 @@ void initDisplay() {
     lbl_date = lv_label_create(top_panel);
     lv_obj_set_pos(lbl_date, 10, 38); // premaknjen za 2 piksla navzgor zaradi večjega fonta
     lv_obj_set_style_text_font(lbl_date, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_date, lv_color_hex(0xAAAAFF), 0);
+    lv_obj_set_style_text_color(lbl_date, lv_color_hex(COL_TEXT_SECONDARY), 0);
     lv_label_set_text(lbl_date, "--.--.----");
 
     // WiFi ikona (desno zgoraj)
@@ -107,9 +107,9 @@ void initDisplay() {
 
     // Vremenski simbol
     lbl_weather = lv_label_create(top_panel);
-    lv_obj_set_pos(lbl_weather, SCR_W - 60, 26); // premaknjen za 2 piksla navzgor zaradi večjega fonta
+    lv_obj_set_pos(lbl_weather, SCR_W - 60, 38); // poravnano z datumom
     lv_obj_set_style_text_font(lbl_weather, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_weather, lv_color_hex(0x99BBFF), 0);
+    lv_obj_set_style_text_color(lbl_weather, lv_color_hex(COL_TEXT_SECONDARY), 0);
     lv_label_set_text(lbl_weather, "...");
 
     // Locilna linija
@@ -130,7 +130,7 @@ void initDisplay() {
         return l;
     };
 
-    const lv_font_t* fSmall = &lv_font_montserrat_14; // povečano iz 12 na 14
+    const lv_font_t* fSmall = &lv_font_montserrat_16; // povečano iz 14 na 16
     const lv_font_t* fVal   = &lv_font_montserrat_16;
     lv_color_t cLbl = lv_color_hex(COL_TEXT_SECONDARY); // uporabi svetlo sivo iz colours.h
 
@@ -197,9 +197,9 @@ void showDetailScreen() {
     };
 
     auto addRow = [&](const char* label, const char* value, lv_color_t col) {
-        addLabel(8,   y, &lv_font_montserrat_14, lv_color_hex(COL_TEXT_SECONDARY), label);
-        addLabel(110, y, &lv_font_montserrat_14, col, value);
-        y += 18; // povečamo razmik zaradi večjega fonta
+        addLabel(8,   y, &lv_font_montserrat_16, lv_color_hex(COL_TEXT_SECONDARY), label);
+        addLabel(110, y, &lv_font_montserrat_16, col, value);
+        y += 20; // povečamo razmik zaradi večjega fonta (font 16 je višji)
     };
 
     auto addSep = [&](lv_color_t col) {
@@ -212,13 +212,13 @@ void showDetailScreen() {
     };
 
     // Header
-    addLabel(8, y, &lv_font_montserrat_16, lv_color_hex(0x4DA6FF), "Podrobnosti");
-    y += 22;
+    addLabel(8, y, &lv_font_montserrat_20, lv_color_hex(0x4DA6FF), "Podrobnosti");
+    y += 26; // večji razmik za font 20
     addSep(lv_color_hex(0x2A2A50));
 
     // Senzorji
-    addLabel(8, y, &lv_font_montserrat_14, lv_color_hex(COL_ACCENT_BLUE), "Senzorji");
-    y += 18;
+    addLabel(8, y, &lv_font_montserrat_16, lv_color_hex(COL_ACCENT_BLUE), "Senzorji");
+    y += 20; // povečamo razmik zaradi večjega fonta
 
     const SensorData& sd = sensorData;
 
@@ -284,8 +284,8 @@ void showDetailScreen() {
 
     // Vreme
     addSep(lv_color_hex(0x2A2A50));
-    addLabel(8, y, &lv_font_montserrat_14, lv_color_hex(COL_ACCENT_TEAL), "Vreme (OpenMeteo)");
-    y += 18;
+    addLabel(8, y, &lv_font_montserrat_16, lv_color_hex(COL_ACCENT_TEAL), "Vreme (OpenMeteo)");
+    y += 20; // povečamo razmik zaradi večjega fonta
 
     if (weatherData.valid) {
         snprintf(buf, sizeof(buf), "%s (%d)", weatherCodeToStr(weatherData.weatherCode), weatherData.weatherCode);
@@ -322,8 +322,8 @@ void showDetailScreen() {
 
     // Sistem
     addSep(lv_color_hex(0x2A2A50));
-    addLabel(8, y, &lv_font_montserrat_14, lv_color_hex(COL_OK), "Sistem");
-    y += 18;
+    addLabel(8, y, &lv_font_montserrat_16, lv_color_hex(COL_OK), "Sistem");
+    y += 20; // povečamo razmik zaradi večjega fonta
 
     addRow("ID:", settings.unitId, white);
     if (WiFi.status() == WL_CONNECTED)
@@ -341,11 +341,13 @@ void showDetailScreen() {
     snprintf(buf, sizeof(buf), "0x%02X", sensorData.err);
     addRow("Err:", buf, sensorData.err ? lv_color_hex(0xFF4444) : lv_color_hex(0x44AA44));
 
-    // Footer
+    // Footer - postavimo 4 piksle pod zadnjo vrstico in centriramo
     lv_obj_t* footer = lv_label_create(detail_screen);
-    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_obj_set_style_text_font(footer, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(footer, SCR_W); // omogoči centriranje teksta
+    lv_obj_set_pos(footer, 0, y + 4);
+    lv_obj_set_style_text_font(footer, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(footer, lv_color_hex(COL_TEXT_DIM), 0);
+    lv_obj_set_style_text_align(footer, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(footer, "tap za nazaj - auto " LV_SYMBOL_CLOSE);
 
     lv_scr_load_anim(detail_screen, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);

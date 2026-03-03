@@ -29,10 +29,8 @@ static int historyHead  = 0;
 
 static lv_obj_t* chart        = nullptr;
 static lv_chart_series_t* ser = nullptr;
-static lv_obj_t* lbl_name     = nullptr;
-static lv_obj_t* lbl_unit     = nullptr;
+static lv_obj_t* lbl_name_unit = nullptr; // združeno ime + enota
 static lv_obj_t* lbl_minmax   = nullptr;
-static lv_obj_t* lbl_current  = nullptr;
 
 #define DISPLAY_POINTS  120   // ~1h pri 30s intervalu
 
@@ -120,33 +118,36 @@ void initGraph(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_obj_set_style_pad_all(cont, 4, 0);
     lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
 
-    lbl_name = lv_label_create(cont);
-    lv_obj_set_pos(lbl_name, 4, 2);
-    lv_obj_set_style_text_color(lbl_name, lv_color_hex(COL_TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_14, 0);
-    lv_label_set_text(lbl_name, graphSensorName(currentGraphSensor));
+    // Združen label za ime senzorja in enoto (levo zgoraj)
+    lbl_name_unit = lv_label_create(cont);
+    lv_obj_set_pos(lbl_name_unit, 4, 4);
+    lv_obj_set_style_text_color(lbl_name_unit, lv_color_hex(0xFFFFFF), 0); // popolnoma bela kot ura
+    lv_obj_set_style_text_font(lbl_name_unit, &lv_font_montserrat_16, 0);
+    
+    // Nastavi začetno vrednost
+    char name_unit_init[32];
+    const char* name_init = graphSensorName(currentGraphSensor);
+    const char* unit_init = graphSensorUnit(currentGraphSensor);
+    if (unit_init[0] != '\0') {
+        snprintf(name_unit_init, sizeof(name_unit_init), "%s %s", name_init, unit_init);
+    } else {
+        snprintf(name_unit_init, sizeof(name_unit_init), "%s", name_init);
+    }
+    lv_label_set_text(lbl_name_unit, name_unit_init);
 
-    lbl_unit = lv_label_create(cont);
-    lv_obj_set_pos(lbl_unit, 4, 20); // premaknjen za 4 piksle navzdol zaradi večjega fonta
-    lv_obj_set_style_text_font(lbl_unit, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_unit, lv_color_hex(COL_TEXT_DIM), 0);
-    lv_label_set_text(lbl_unit, graphSensorUnit(currentGraphSensor));
-
-    lbl_current = lv_label_create(cont);
-    lv_obj_align(lbl_current, LV_ALIGN_TOP_RIGHT, -4, 2);
-    lv_obj_set_style_text_font(lbl_current, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_current, graphSensorColor(currentGraphSensor), 0);
-    lv_label_set_text(lbl_current, "--");
-
+    // Label za min/max (desno zgoraj)
     lbl_minmax = lv_label_create(cont);
-    lv_obj_align(lbl_minmax, LV_ALIGN_TOP_RIGHT, -4, 22); // premaknjen za 2 piksla navzdol zaradi večjega fonta
-    lv_obj_set_style_text_font(lbl_minmax, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(lbl_minmax, w - 8, 4); // desna pozicija, poravnava desno
+    lv_obj_set_width(lbl_minmax, 80); // dovolj prostora za "XX.X / XX.X"
+    lv_obj_set_style_text_align(lbl_minmax, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_minmax, lv_color_hex(COL_TEXT_DIM), 0);
+    lv_obj_set_style_text_font(lbl_minmax, &lv_font_montserrat_16, 0);
     lv_label_set_text(lbl_minmax, "");
 
+    // Graf začnemo nekoliko višje, ker imamo samo eno vrstico napisov
     chart = lv_chart_create(cont);
-    lv_obj_set_pos(chart, 0, 30);
-    lv_obj_set_size(chart, w - 8, h - 38);
+    lv_obj_set_pos(chart, 0, 22);
+    lv_obj_set_size(chart, w - 8, h - 30);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, DISPLAY_POINTS);
     lv_chart_set_div_line_count(chart, 3, 0);
@@ -176,9 +177,18 @@ void graphNextSensor() {
     LOG_INFO("GRAPH", "Switched to sensor %d (%s)", currentGraphSensor, graphSensorName(currentGraphSensor));
     if (!chart || !ser) return;
     lv_chart_set_series_color(chart, ser, graphSensorColor(currentGraphSensor));
-    lv_label_set_text(lbl_name, graphSensorName(currentGraphSensor));
-    lv_label_set_text(lbl_unit, graphSensorUnit(currentGraphSensor));
-    lv_obj_set_style_text_color(lbl_current, graphSensorColor(currentGraphSensor), 0);
+    
+    // Posodobi združen label za ime in enoto
+    char name_unit[32];
+    const char* name = graphSensorName(currentGraphSensor);
+    const char* unit = graphSensorUnit(currentGraphSensor);
+    if (unit[0] != '\0') {
+        snprintf(name_unit, sizeof(name_unit), "%s %s", name, unit);
+    } else {
+        snprintf(name_unit, sizeof(name_unit), "%s", name);
+    }
+    lv_label_set_text(lbl_name_unit, name_unit);
+    
     graphRefresh();
 }
 
@@ -191,14 +201,18 @@ void graphRefresh() {
         float val = getWeatherValue(currentGraphSensor);
         lv_chart_set_all_value(chart, ser, (lv_coord_t)(val * 10));
         lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, (lv_coord_t)(val * 10 * 2 + 10));
-        char buf[32];
-        if (currentGraphSensor == GRAPH_SOIL_MOIST)
-            snprintf(buf, sizeof(buf), "%.1f%%", val);
-        else if (currentGraphSensor == GRAPH_WIND || currentGraphSensor == GRAPH_CLOUD)
-            snprintf(buf, sizeof(buf), "%.0f %s", val, graphSensorUnit(currentGraphSensor));
-        else
-            snprintf(buf, sizeof(buf), "%.1f %s", val, graphSensorUnit(currentGraphSensor));
-        lv_label_set_text(lbl_current, buf);
+        
+        // Nastavi ime + enoto (če še ni nastavljeno)
+        char name_unit[32];
+        const char* name = graphSensorName(currentGraphSensor);
+        const char* unit = graphSensorUnit(currentGraphSensor);
+        if (unit[0] != '\0') {
+            snprintf(name_unit, sizeof(name_unit), "%s %s", name, unit);
+        } else {
+            snprintf(name_unit, sizeof(name_unit), "%s", name);
+        }
+        lv_label_set_text(lbl_name_unit, name_unit);
+        
         lv_label_set_text(lbl_minmax, "(OpenMeteo)");
         lv_chart_refresh(chart);
         return;
@@ -207,7 +221,6 @@ void graphRefresh() {
     int pts = min(historyCount, DISPLAY_POINTS);
     if (pts < 2) {
         lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
-        lv_label_set_text(lbl_current, "--");
         lv_label_set_text(lbl_minmax, "Ni podatkov");
         lv_chart_refresh(chart);
         return;
@@ -225,7 +238,7 @@ void graphRefresh() {
 
     if (vMin > vMax) {
         lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
-        lv_label_set_text(lbl_current, "--");
+        lv_label_set_text(lbl_minmax, "--/--");
         lv_chart_refresh(chart);
         return;
     }
@@ -267,16 +280,26 @@ void graphRefresh() {
     }
     lv_chart_refresh(chart);
 
-    char bufCur[24], bufMM[32];
-    if (currentGraphSensor == GRAPH_PRESS || currentGraphSensor == GRAPH_CO2)
-        snprintf(bufCur, sizeof(bufCur), "%.0f %s", lastVal, graphSensorUnit(currentGraphSensor));
-    else if (currentGraphSensor == GRAPH_LUX)
-        snprintf(bufCur, sizeof(bufCur), "%.0f lux", lastVal);
-    else
-        snprintf(bufCur, sizeof(bufCur), "%.1f %s", lastVal, graphSensorUnit(currentGraphSensor));
-    lv_label_set_text(lbl_current, bufCur);
+    // Nastavi ime + enoto (če še ni nastavljeno)
+    char name_unit[32];
+    const char* name = graphSensorName(currentGraphSensor);
+    const char* unit = graphSensorUnit(currentGraphSensor);
+    if (unit[0] != '\0') {
+        snprintf(name_unit, sizeof(name_unit), "%s %s", name, unit);
+    } else {
+        snprintf(name_unit, sizeof(name_unit), "%s", name);
+    }
+    lv_label_set_text(lbl_name_unit, name_unit);
 
-    snprintf(bufMM, sizeof(bufMM), "%.1f / %.1f", vMin, vMax);
+    // Prikaži min/max
+    char bufMM[32];
+    if (currentGraphSensor == GRAPH_PRESS || currentGraphSensor == GRAPH_CO2) {
+        snprintf(bufMM, sizeof(bufMM), "%.0f / %.0f", vMin, vMax);
+    } else if (currentGraphSensor == GRAPH_LUX) {
+        snprintf(bufMM, sizeof(bufMM), "%.0f / %.0f", vMin, vMax);
+    } else {
+        snprintf(bufMM, sizeof(bufMM), "%.1f / %.1f", vMin, vMax);
+    }
     lv_label_set_text(lbl_minmax, bufMM);
 }
 
