@@ -71,14 +71,22 @@ input,select{background:#1e1e1e;color:#ddd;border:1px solid #444;
          border-radius:3px;font-size:11px;font-weight:bold}
 .tag-log{background:#1565c0;color:#fff;padding:1px 6px;
          border-radius:3px;font-size:11px;font-weight:bold}
+.nav-home { background:#4caf50; color:#fff; border-radius:5px; padding:5px 12px;
+            font-size:13px; text-decoration:none; line-height:1; display:inline-block; }
+.nav-home:hover { background:#66bb6a; }
+.nav-stream { background:#1565c0; color:#fff; border-radius:5px; padding:5px 12px;
+              font-size:13px; text-decoration:none; line-height:1; display:inline-block; }
+.nav-stream:hover { background:#1e88e5; }
 </style>)";
 
 static String navBar() {
     return "<nav>"
+           "<a href='http://192.168.2.192/' class='nav-home' title='Domov'>&#127968;</a>"
            "<a href='/'>Status</a>"
            "<a href='/settings'>Nastavitve</a>"
            "<a href='/sd-list'>SD / Posnetki</a>"
            "<a href='/logs'>Logi</a>"
+           "<a href='http://" + String(settings.localIP) + ":81/stream' class='nav-stream' title='Stream kamere' target='_blank'>&#128249;</a>"
            "</nav>";
 }
 

@@ -5,36 +5,35 @@
 // Pini:      MOSI=IO38, SCLK=IO39, MISO=IO40, CS=IO41 (config.h)
 //
 // POZOR - skupni SPI bus z LCD:
-//   - Vse SD operacije morajo pridobiti sdMutex pred dostopom
-//   - LVGL ne sme pisati na zaslon med SD operacijo
-//   - Mutex timeout: 200ms za flush, 500ms za init/cleanup
+//   - LCD gonilnik (Display_ST7789.cpp) inicializira FSPI bus prek objekta
+//     LCDspi(FSPI) z LCDspi.begin(SCLK=39, MISO=-1, MOSI=38).
+//   - SD.begin() MORA dobiti isti SPIClass objekt (LCDspi), sicer SD
+//     knjižnica ne ve za pravilen SPI bus in init ne uspe.
+//   - Ker LCD inicializira bus brez MISO (-1), moramo MISO (IO40) dodati
+//     ročno pred SD.begin() z LCDspi.begin(SCLK, MISO, MOSI) klicem.
+//   - Vse SD operacije morajo pridobiti sdMutex pred dostopom.
 //
-// SPI BUS DELJENJE:
-//   LCD gonilnik (Display_ST7789.cpp) inicializira SPI bus z SPI.begin().
-//   SD.begin() mora dobiti referenco na isti SPIClass objekt - sicer
-//   SD knjižnica inicializira nov (2.) SPI bus, kar povzroči konflikte.
-//   Rešitev: SD.begin(SD_CS_PIN, SPI) - SPI je globalni SPIClass objekt
-//   iz Arduino SPI.h, ki ga je LCD gonilnik že inicializiral.
+// POPRAVKI (2026-03-03):
+//   - KRITIČNA NAPAKA ODPRAVLJENA: SD.begin(SD_CS_PIN, SPI) → SD.begin(SD_CS_PIN, LCDspi)
+//     Razlog: LCD gonilnik uporablja lokalni SPIClass LCDspi(FSPI), ne globalni SPI.
+//     SD.begin() z globalnim SPI objektom ne dobi veljavnega SPI busa → init fail.
+//   - MISO pin dodan: LCDspi.begin() ob LCD init ne konfigurira MISO (-1).
+//     SD kartica nujno potrebuje MISO (IO40) → pred SD.begin() kličemo
+//     LCDspi.begin(SD_SCLK_PIN, SD_MISO_PIN, SD_MOSI_PIN) da MISO doda na bus.
 //
 // Datoteke na SD:
 //   sew_YYYY-MM-DD.csv   - senzorske meritve (vsak DATA_SEND_INTERVAL)
 //   log_YYYY-MM-DD.txt   - sistemski logi (logging.cpp)
-//
-// POPRAVKI (2026-02-28):
-//   - sensorData.voc -> sensorData.breathVOC (SensorData nima "voc" polja)
-//   - CSV header popravljen: voc -> breath_voc, dodani iaq, siaq, eco2 stolpci
-//
-// POPRAVKI (2026-02-28 v2):
-//   - SD.begin(SD_CS_PIN) -> SD.begin(SD_CS_PIN, SPI)
-//     Ekspliciten SPI parameter zagotovi, da SD uporablja isti SPI bus
-//     kot LCD gonilnik in ne inicializira svojega SPI busa.
-//   - listFiles(): popravljen iteracijski vzorec (shrani podatke pred close())
 
 #include "sd_card.h"
 #include "globals.h"
 #include "logging.h"
 #include <SPI.h>
 #include <SD.h>
+
+// LCDspi je definiran v Display_ST7789.cpp (SPIClass LCDspi(FSPI))
+// SD mora dobiti referenco na ta isti objekt!
+extern SPIClass LCDspi;
 
 // ============================================================
 // Inicializacija
@@ -51,13 +50,18 @@ bool initSD() {
         return false;
     }
 
-    // FIX: SD.begin(SD_CS_PIN, SPI) - eksplicitni SPI objekt!
-    // LCD gonilnik je ze inicializiral SPI bus (MOSI=IO38, SCLK=IO39).
-    // SD.begin() z eksplicitnim SPI parametrom zagotovi, da SD
-    // ne inicializira svojega SPI busa, ampak se prikljuci na obstojecega.
-    // Brez tega parametra bi SD knjiznica klicala SPI.begin() z defaultnimi
-    // pini, kar bi povzrocilo konflikt na skupnem busu.
-    bool ok = SD.begin(SD_CS_PIN, SPI);
+    // Konfiguriraj MISO pin na obstoječem LCDspi objektu.
+    // LCD gonilnik je klical LCDspi.begin(SCLK=39, MISO=-1, MOSI=38) - brez MISO.
+    // SD kartica potrebuje MISO (IO40), zato pokličemo begin() ponovno z MISO pinom.
+    // SPI.begin() na ESP32 Arduino je idempotenten glede že nastavljenih pinov -
+    // samo doda/posodobi pine ki so podani, ne resetira busa.
+    LCDspi.begin(SD_SCLK_PIN, SD_MISO_PIN, SD_MOSI_PIN);
+
+    // FIX: SD.begin(SD_CS_PIN, LCDspi) - eksplicitni LCDspi objekt!
+    // LCD gonilnik je inicializiral FSPI bus prek LCDspi(FSPI), ne prek globalnega SPI.
+    // SD.begin() z globalnim SPI ne dobi veljavnega busa → init fail.
+    // Z LCDspi referenco SD pravilno uporablja že inicializiran FSPI bus.
+    bool ok = SD.begin(SD_CS_PIN, LCDspi);
 
     if (!ok) {
         xSemaphoreGive(sdMutex);
@@ -125,18 +129,6 @@ static bool ensureCSV(const String& filename, const char* header) {
 
 // ============================================================
 // saveSDData() - shrani senzorske meritve
-//
-// Klic: po vsakem uspesnem posiljanju na REW (ali ob vsakem
-//       branju senzorjev, odvisno od nastavitev)
-//
-// Format CSV (skladen s SensorData polji):
-//   timestamp, datetime, unit_id,
-//   temp, hum, press,
-//   iaq, siaq, iaq_acc, eco2, breath_voc,   <- BSEC polja
-//   lux, cct,
-//   motion, motion_count,
-//   bat_v, bat_pct,
-//   err, http_code
 // ============================================================
 void saveSDData() {
     if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
@@ -146,7 +138,6 @@ void saveSDData() {
 
     String filename = makeFilename("sew_", ".csv");
 
-    // Header usklajen s SensorData polji
     static const char* HEADER =
         "timestamp,datetime,unit_id,"
         "temp,hum,press,"
@@ -181,26 +172,20 @@ void saveSDData() {
              getTimestamp(),
              getDatetime().c_str(),
              sensorData.unitId,
-             // temp, hum, press
              sensorData.temp,
              sensorData.hum,
              sensorData.press,
-             // BSEC
              (unsigned)sensorData.iaq,
              (unsigned)sensorData.staticIaq,
              (unsigned)sensorData.iaqAccuracy,
              sensorData.eCO2,
              sensorData.breathVOC,
-             // lux, cct
              sensorData.lux,
              (unsigned)sensorData.cct,
-             // gibanje
              sensorData.motion ? 1 : 0,
              (unsigned)sensorData.motionCount,
-             // baterija
              sensorData.bat,
              (unsigned)sensorData.batPct,
-             // stanje
              (unsigned)sensorData.err,
              sensorData.lastHttpCode);
 
@@ -261,7 +246,6 @@ String listFiles() {
 
     File entry = root.openNextFile();
     while (entry) {
-        // FIX: shrani podatke pred close()
         String name = String(entry.name());
         size_t sz = entry.size();
         bool isDir = entry.isDirectory();
