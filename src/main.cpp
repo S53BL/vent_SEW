@@ -96,14 +96,34 @@ static void syncNTP() {
         struct tm* ti = localtime(&now);
         char tbuf[32];
         strftime(tbuf, sizeof(tbuf), "%d.%m.%Y %H:%M:%S", ti);
-        timeSynced = true;
-        sensorData.err &= ~ERR_NTP;
         LOG_INFO("MAIN", "NTP sync OK: %s", tbuf);
 
         // Inicializiraj ezTime timezone po uspešni NTP sinhronizaciji
-        myTZ.setLocation(F("Europe/Ljubljana"));
-        LOG_INFO("MAIN", "myTZ set: Europe/Ljubljana");
-        lastNtpSyncMs = millis();  // globals timing var
+        myTZ.setPosix(TZ_STRING);
+        LOG_INFO("MAIN", "myTZ set via POSIX: %s", TZ_STRING);
+
+        // Čakaj da myTZ postane ready (events processing)
+        unsigned long myTZStart = millis();
+        bool myTZReady = false;
+        while (millis() - myTZStart < 15000) {
+            events();  // ezTime processing
+            if (myTZ.now() > 1577836800UL) {  // 2020-01-01
+                myTZReady = true;
+                break;
+            }
+            delay(200);
+        }
+
+        if (myTZReady) {
+            timeSynced = true;
+            sensorData.err &= ~ERR_NTP;
+            lastNtpSyncMs = millis();  // globals timing var
+            LOG_INFO("MAIN", "myTZ ready: %s", myTZ.dateTime().c_str());
+        } else {
+            sensorData.err |= ERR_NTP;
+            timeSynced = false;
+            LOG_WARN("MAIN", "myTZ sync timeout (15s)");
+        }
     } else {
         sensorData.err |= ERR_NTP;
         LOG_WARN("MAIN", "NTP sync timeout");
