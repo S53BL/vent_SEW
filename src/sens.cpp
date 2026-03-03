@@ -1,19 +1,23 @@
 // sens.cpp - Sensor module implementation for vent_SEW
 //
-// POPRAVEK (2026-03-02): VSI senzorji na enem I2C busu (Wire - IO48=SDA, IO47=SCL)
-//   - Wire (IO48=SDA, IO47=SCL): Touch (CST816D) + IMU + SHT41 + BME680 + TCS34725
-//   - Wire1 ODSTRANJEN - ne obstaja več
-//   - initI2CBus() ne kliče Wire.begin() - Touch_Init() v LVGL_Driver.cpp
-//     že inicializira Wire(IO48, IO47) pred klicem initSens()
-//   - Vse Wire1.xxx zamenjano z Wire.xxx
-//
-// Senzorji na Wire (IO48/IO47):
+// Senzorji na I2C_Sensors (Wire, IO48/IO47 - skupen bus):
 //   CST816D  (0x15) - touch (inicializira LVGL_Driver.cpp)
 //   QMI8658  (0x6A) - IMU
 //   SHT41    (0x44) - temperatura, vlažnost
-//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC2 1.8.2600)
+//   BME680   (0x76) - tlak, IAQ, eCO2, breathVOC (via BSEC2)
 //   TCS34725 (0x29) - lux, CCT, RGB
 //   PIR      (IO18) - gibanje → ob detekciji kliče startMotionRecording()
+//
+// BSEC2 inicializacijski tok (OBVEZEN VRSTNI RED!):
+//   1. iaqSensor.begin(address, Wire)
+//   2. iaqSensor.setConfig(bsec_config_iaq)   ← NOVO v BSEC2, manjkalo v v1!
+//   3. loadBsecState() → iaqSensor.setState()
+//   4. iaqSensor.attachCallback(bsecDataCallback)
+//   5. iaqSensor.updateSubscription(list, count, BSEC_SAMPLE_RATE_LP)
+//
+// BSEC2 podatki prihajajo skozi callback (ne polling member spremenljivk):
+//   - bsecDataCallback() prejme outputs strukturo
+//   - switch(o.sensor_id) razporeja vrednosti v sensorData
 //
 // newSensorData flag:
 //   - Po vsakem uspešnem readSensors() se postavi na true
@@ -40,37 +44,38 @@
 // Baterija:
 //   - ADC IO5, delilnik 200K/100K → faktor x3, povprečje 16 vzorcev
 //
-// POPRAVKI (2026-03-02):
-//   - FIX: TCS34725 konstruktor popravljen.
-//     Adafruit_TCS34725 sprejema SAMO 2 parametra (integrationTime, gain).
-//     &Wire se NE sme podati konstruktorju - gre v begin().
-//     NAPAČNO: new Adafruit_TCS34725(TIME, GAIN, &Wire)  ← ne obstaja 3-param konstruktor
-//     PRAVILNO: new Adafruit_TCS34725(TIME, GAIN)
-//               tcs->begin(TCS_ADDRESS, &Wire)            ← Wire gre sem
-//     Popravek apliciran na 2 mestih: initSensors() + performPeriodicSensorCheck()
+// MIGRACIJA (2026-03-03):
+//   - BSEC Software Library v1.x → Bosch-BSEC2-Library
+//   - Razlog: v1.x nima ESP32-S3 binarije (xtensa-esp32s3-elf-gcc)
+//   - Spremembe: #include <bsec2.h>, Bsec2 razred, setConfig(), attachCallback()
+//   - Vmesnik navzven (sens.h) se NI spremenil
 //
-// POPRAVKI (2026-03-02 v2):
-//   - FIX: #include <SensirionI2CSht4x.h> → <SensirionI2cSht4x.h>
-//     Pravi header iz library.properties: SensirionI2cSht4x.h (malo 'c', malo 'x')
-//     Velika 'C' v SensirionI2CSht4x.h povzroča napako pri kompilaciji na
-//     case-sensitive datotečnih sistemih (Linux/PlatformIO build sistem).
+// POPRAVKI (2026-03-02):
+//   - FIX: TCS34725 konstruktor - samo 2 parametra, &Wire gre v begin()
+//   - FIX: #include <SensirionI2cSht4x.h> (malo 'c', malo 'x')
+//   - FIX: Wire (IO48/IO47) - skupen bus, inicializira Touch_Init()
 
 #include "sens.h"
 #include "cam.h"       // startMotionRecording()
 #include "globals.h"
 #include "logging.h"
 #include <Wire.h>
-#include <SensirionI2cSht4x.h>  // FIX (2026-03-02 v2): pravilno ime - malo 'c' in malo 'x'
-                                  // NAPACNO bilo: SensirionI2CSht4x.h (velika 'C')
-#include <bsec2.h>                   // BSEC-Arduino-library v1.8.2600
+#include <SensirionI2cSht4x.h>
+#include <bsec2.h>                    // BSEC2 (Bosch-BSEC2-Library)
 #include <Adafruit_TCS34725.h>
 #include <Preferences.h>
+
+// BSEC2 config blob - za BME680, 3.3V, LP (3s), 4-day model
+// Ta header je del Bosch-BSEC2-Library, PlatformIO ga najde avtomatično
+const uint8_t bsec_config_iaq[] = {
+#include "config/bme680/bme680_iaq_33v_3s_4d/bsec_iaq.txt"
+};
 
 // ============================================================
 // Senzorski objekti
 // ============================================================
-static SensirionI2cSht4x* sht41 = nullptr;  // FIX: tip usklajen s popravljenim headerjem
-static Bsec2             envSensor; // BSEC objekt (ne pointer - zahteva lib)
+static SensirionI2cSht4x* sht41 = nullptr;
+static Bsec2              iaqSensor;    // BSEC2: Bsec2 razred
 static Adafruit_TCS34725* tcs   = nullptr;
 
 // Error counters
@@ -86,12 +91,13 @@ static uint8_t       stateUpdateCount = 0;  // 0 = čaka na prvo accuracy>=3
 static bool pirLastState = false;
 
 // ============================================================
-// BSEC subscriptions
+// BSEC2 subscription lista
 // ============================================================
 static bsec_virtual_sensor_t bsecSensorList[] = {
     BSEC_OUTPUT_RAW_PRESSURE,
     BSEC_OUTPUT_RAW_TEMPERATURE,
     BSEC_OUTPUT_RAW_HUMIDITY,
+    BSEC_OUTPUT_COMPENSATED_GAS,
     BSEC_OUTPUT_IAQ,
     BSEC_OUTPUT_STATIC_IAQ,
     BSEC_OUTPUT_CO2_EQUIVALENT,
@@ -159,9 +165,8 @@ static void loadBsecState() {
         return;
     }
 
-    envSensor.setState(stateBlob);
-    if (envSensor.status != BSEC_OK) {
-        LOG_WARN("BSEC", "setState failed (status=%d) - starting fresh", envSensor.status);
+    if (!iaqSensor.setState(stateBlob)) {
+        LOG_WARN("BSEC", "setState failed (status=%d) - starting fresh", iaqSensor.status);
     } else {
         LOG_INFO("BSEC", "State loaded from NVS - calibration continues");
     }
@@ -169,10 +174,8 @@ static void loadBsecState() {
 
 static void saveBsecState() {
     uint8_t stateBlob[BSEC_MAX_STATE_BLOB_SIZE];
-    envSensor.getState(stateBlob);
-
-    if (envSensor.status != BSEC_OK) {
-        LOG_WARN("BSEC", "getState failed (status=%d) - not saving", envSensor.status);
+    if (!iaqSensor.getState(stateBlob)) {
+        LOG_WARN("BSEC", "getState failed (status=%d) - not saving", iaqSensor.status);
         return;
     }
 
@@ -190,8 +193,8 @@ static void updateBsecState() {
     bool doSave = false;
 
     if (stateUpdateCount == 0) {
-        bsecData iaqData = envSensor.getData(BSEC_OUTPUT_IAQ);
-        if (iaqData.accuracy >= 3) {
+        // iaqAccuracy se polni v bsecDataCallback()
+        if (sensorData.iaqAccuracy >= 3) {
             doSave = true;
             stateUpdateCount++;
             LOG_INFO("BSEC", "First full calibration reached! Saving state.");
@@ -210,6 +213,58 @@ static void updateBsecState() {
 }
 
 // ============================================================
+// BSEC2 CALLBACK
+// Pokliče se avtomatično ko so novi podatki pripravljeni.
+// POZOR: mora biti static (ali global) ker jo registriramo z attachCallback()
+// ============================================================
+static void bsecDataCallback(const bme68xData data,
+                              const bsecOutputs outputs,
+                              const Bsec2 bsec) {
+    if (!outputs.nOutputs) return;
+
+    bme680ErrorCount = 0;
+    sensorData.err &= ~ERR_BME680;
+
+    for (uint8_t i = 0; i < outputs.nOutputs; i++) {
+        const bsecData o = outputs.output[i];
+        switch (o.sensor_id) {
+            case BSEC_OUTPUT_IAQ:
+                sensorData.iaq         = (uint16_t)o.signal;
+                sensorData.iaqAccuracy = o.accuracy;
+                break;
+            case BSEC_OUTPUT_STATIC_IAQ:
+                sensorData.staticIaq = (uint16_t)o.signal;
+                break;
+            case BSEC_OUTPUT_CO2_EQUIVALENT:
+                sensorData.eCO2 = o.signal;
+                break;
+            case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
+                sensorData.breathVOC = o.signal;
+                break;
+            case BSEC_OUTPUT_RAW_PRESSURE:
+                sensorData.press = o.signal / 100.0f + settings.pressOffset;
+                break;
+            case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
+                // Opcijsko: kompenzirana temp iz BME (za cross-check s SHT41)
+                break;
+            case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY:
+                // Opcijsko
+                break;
+            default:
+                break;
+        }
+    }
+
+    LOG_INFO("BSEC", "P=%.1fhPa IAQ=%u(acc=%d) sIAQ=%u eCO2=%.0f bVOC=%.2f",
+             sensorData.press,
+             sensorData.iaq, sensorData.iaqAccuracy,
+             sensorData.staticIaq,
+             sensorData.eCO2, sensorData.breathVOC);
+
+    updateBsecState();
+}
+
+// ============================================================
 // INICIALIZACIJA SENZORJEV
 // ============================================================
 bool initSensors() {
@@ -220,7 +275,7 @@ bool initSensors() {
 
     // --- SHT41 ---
     if (checkI2CDevice(SHT41_ADDRESS)) {
-        sht41 = new SensirionI2cSht4x();  // FIX: tip usklajen s popravljenim headerjem
+        sht41 = new SensirionI2cSht4x();
         sht41->begin(Wire, SHT41_ADDRESS);
         sht41->softReset();
         delay(10);
@@ -240,31 +295,42 @@ bool initSensors() {
         LOG_WARN("SHT41", "Not on I2C (0x%02X)", SHT41_ADDRESS);
     }
 
-    // --- BME680 + BSEC ---
+    // --- BME680 + BSEC2 ---
+    // OBVEZEN VRSTNI RED: begin → setConfig → loadBsecState → attachCallback → updateSubscription
     if (checkI2CDevice(BME680_ADDRESS)) {
-        envSensor.begin(BME680_ADDRESS, Wire);
+        iaqSensor.begin(BME680_ADDRESS, Wire);
 
-        if (envSensor.status != BSEC_OK || envSensor.sensor.status != BME68X_OK) {
+        if (iaqSensor.status != BSEC_OK || iaqSensor.sensor.status != BME68X_OK) {
             LOG_WARN("BSEC", "begin() failed (bsec=%d bme68x=%d)",
-                     envSensor.status, envSensor.sensor.status);
+                     iaqSensor.status, iaqSensor.sensor.status);
         } else {
-            loadBsecState();
-
-            envSensor.updateSubscription(
-                bsecSensorList,
-                sizeof(bsecSensorList) / sizeof(bsecSensorList[0]),
-                BSEC_SAMPLE_RATE_LP
-            );
-
-            if (envSensor.status != BSEC_OK) {
-                LOG_WARN("BSEC", "updateSubscription failed (status=%d)", envSensor.status);
+            // KORAK 2: setConfig - OBVEZNO pred setState in updateSubscription!
+            // Brez tega: status=14 (BSEC_E_CONFIG_FAIL)
+            if (!iaqSensor.setConfig(bsec_config_iaq)) {
+                LOG_WARN("BSEC", "setConfig failed (status=%d)", iaqSensor.status);
             } else {
-                bme680Present = true;
-                bme680ErrorCount = 0;
-                sensorData.err &= ~ERR_BME680;
-                LOG_INFO("BSEC", "OK v%d.%d.%d.%d sample_rate=LP",
-                         envSensor.version.major, envSensor.version.minor,
-                         envSensor.version.major_bugfix, envSensor.version.minor_bugfix);
+                // KORAK 3: naloži shranjeno kalibracijo
+                loadBsecState();
+
+                // KORAK 4: registriraj callback
+                iaqSensor.attachCallback(bsecDataCallback);
+
+                // KORAK 5: naroči se na izhode
+                if (!iaqSensor.updateSubscription(
+                    bsecSensorList,
+                    sizeof(bsecSensorList) / sizeof(bsecSensorList[0]),
+                    BSEC_SAMPLE_RATE_LP
+                )) {
+                    LOG_WARN("BSEC", "updateSubscription failed (status=%d)",
+                             iaqSensor.status);
+                } else {
+                    bme680Present = true;
+                    bme680ErrorCount = 0;
+                    sensorData.err &= ~ERR_BME680;
+                    LOG_INFO("BSEC", "OK v%d.%d.%d.%d sample_rate=LP",
+                             iaqSensor.version.major, iaqSensor.version.minor,
+                             iaqSensor.version.major_bugfix, iaqSensor.version.minor_bugfix);
+                }
             }
         }
     } else {
@@ -273,11 +339,8 @@ bool initSensors() {
 
     // --- TCS34725 ---
     if (checkI2CDevice(TCS_ADDRESS)) {
-        // FIX (2026-03-02): Konstruktor sprejema SAMO 2 parametra!
-        // &Wire se NIKOLI ne podaja konstruktorju - Adafruit_TCS34725 ga ne sprejema.
-        // Wire gre v begin() kot 2. parameter.
-        // NAPAČNO (prej): new Adafruit_TCS34725(TIME, GAIN, &Wire)
-        // PRAVILNO (zdaj): new Adafruit_TCS34725(TIME, GAIN)
+        // Konstruktor sprejema SAMO 2 parametra!
+        // &Wire se NIKOLI ne podaja konstruktorju - gre v begin()
         tcs = new Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_154MS, TCS34725_GAIN_4X);
         if (tcs->begin(TCS_ADDRESS, &Wire)) {
             tcsPresent = true;
@@ -353,45 +416,27 @@ void readSensors() {
         }
     }
 
-    // --- BME680 + BSEC ---
+    // --- BME680 + BSEC2 ---
+    // run() sproži callback (bsecDataCallback) ko so novi podatki pripravljeni.
+    // Podatkov ne beremo direktno - pridejo skozi callback.
     if (bme680Present) {
-        if (envSensor.run()) {
-            bme680ErrorCount = 0;
-            sensorData.err &= ~ERR_BME680;
-
-            bsecData pressData = envSensor.getData(BSEC_OUTPUT_RAW_PRESSURE);
-            bsecData iaqData = envSensor.getData(BSEC_OUTPUT_IAQ);
-            bsecData staticIaqData = envSensor.getData(BSEC_OUTPUT_STATIC_IAQ);
-            bsecData co2Data = envSensor.getData(BSEC_OUTPUT_CO2_EQUIVALENT);
-            bsecData bvocData = envSensor.getData(BSEC_OUTPUT_BREATH_VOC_EQUIVALENT);
-            
-            sensorData.press       = pressData.signal / 100.0f + settings.pressOffset;
-            sensorData.iaq         = (uint16_t)iaqData.signal;
-            sensorData.iaqAccuracy = iaqData.accuracy;
-            sensorData.staticIaq   = (uint16_t)staticIaqData.signal;
-            sensorData.eCO2        = co2Data.signal;
-            sensorData.breathVOC   = bvocData.signal;
-
-            LOG_INFO("BSEC", "P=%.1fhPa IAQ=%u(acc=%d) sIAQ=%u eCO2=%.0f bVOC=%.2f",
-                     sensorData.press,
-                     sensorData.iaq, sensorData.iaqAccuracy,
-                     sensorData.staticIaq,
-                     sensorData.eCO2, sensorData.breathVOC);
-
-            updateBsecState();
-
-        } else if (envSensor.status < BSEC_OK || envSensor.sensor.status < BME68X_OK) {
-            bme680ErrorCount++;
-            sensorData.err |= ERR_BME680;
-            LOG_WARN("BSEC", "Error (bsec=%d bme68x=%d count=%d/%d)",
-                     envSensor.status, envSensor.sensor.status,
-                     bme680ErrorCount, SENSOR_RETRY_COUNT);
-            if (bme680ErrorCount >= SENSOR_RETRY_COUNT) {
-                bme680Present = false; bme680ErrorCount = 0;
-                LOG_WARN("BSEC", "BME680 marked absent");
+        if (!iaqSensor.run()) {
+            // run() vrne false: ali ni novih podatkov (normalno) ali napaka
+            if (iaqSensor.status < BSEC_OK || iaqSensor.sensor.status < BME68X_OK) {
+                bme680ErrorCount++;
+                sensorData.err |= ERR_BME680;
+                LOG_WARN("BSEC", "Error (bsec=%d bme68x=%d count=%d/%d)",
+                         iaqSensor.status, iaqSensor.sensor.status,
+                         bme680ErrorCount, SENSOR_RETRY_COUNT);
+                if (bme680ErrorCount >= SENSOR_RETRY_COUNT) {
+                    bme680Present = false;
+                    bme680ErrorCount = 0;
+                    LOG_WARN("BSEC", "BME680 marked absent");
+                }
             }
+            // else: run()==false brez napake = normalno, čaka na naslednji LP interval
         }
-        // else: run()==false brez napake = normalno, ni novih podatkov
+        // else: run()==true → callback je bil poklican, podatki so v sensorData
     }
 
     // --- TCS34725 ---
@@ -496,7 +541,7 @@ void performPeriodicSensorCheck() {
     // SHT41
     if (!sht41Present && checkI2CDevice(SHT41_ADDRESS)) {
         if (sht41) { delete sht41; sht41 = nullptr; }
-        sht41 = new SensirionI2cSht4x();  // FIX: tip usklajen s popravljenim headerjem
+        sht41 = new SensirionI2cSht4x();
         sht41->begin(Wire, SHT41_ADDRESS); sht41->softReset(); delay(10);
         float t, h;
         if (!sht41->measureHighPrecision(t, h) && t > TEMP_MIN && t < TEMP_MAX) {
@@ -508,30 +553,32 @@ void performPeriodicSensorCheck() {
         }
     }
 
-    // BME680 + BSEC
+    // BME680 + BSEC2 reconnect
+    // Enak vrstni red kot initSensors: begin → setConfig → loadBsecState → attachCallback → updateSubscription
     if (!bme680Present && checkI2CDevice(BME680_ADDRESS)) {
-        envSensor.begin(BME680_ADDRESS, Wire);
-        if (envSensor.status == BSEC_OK && envSensor.sensor.status == BME68X_OK) {
-            loadBsecState();
-            envSensor.updateSubscription(
-                bsecSensorList,
-                sizeof(bsecSensorList) / sizeof(bsecSensorList[0]),
-                BSEC_SAMPLE_RATE_LP
-            );
-            if (envSensor.status == BSEC_OK) {
-                bme680Present = true; bme680ErrorCount = 0;
-                sensorData.err &= ~ERR_BME680;
-                LOG_INFO("BSEC", "BME680 reconnected, state restored");
+        iaqSensor.begin(BME680_ADDRESS, Wire);
+        if (iaqSensor.status == BSEC_OK && iaqSensor.sensor.status == BME68X_OK) {
+            if (iaqSensor.setConfig(bsec_config_iaq)) {
+                loadBsecState();
+                iaqSensor.attachCallback(bsecDataCallback);
+                if (iaqSensor.updateSubscription(
+                    bsecSensorList,
+                    sizeof(bsecSensorList) / sizeof(bsecSensorList[0]),
+                    BSEC_SAMPLE_RATE_LP
+                )) {
+                    bme680Present = true; bme680ErrorCount = 0;
+                    sensorData.err &= ~ERR_BME680;
+                    LOG_INFO("BSEC", "BME680 reconnected, state restored");
+                }
             }
         } else {
-            LOG_WARN("BSEC", "BME680 reconnect failed (bsec=%d)", envSensor.status);
+            LOG_WARN("BSEC", "BME680 reconnect failed (bsec=%d)", iaqSensor.status);
         }
     }
 
     // TCS34725
     if (!tcsPresent && checkI2CDevice(TCS_ADDRESS)) {
         if (tcs) { delete tcs; tcs = nullptr; }
-        // FIX (2026-03-02): Konstruktor brez &Wire (enako kot initSensors zgoraj)
         tcs = new Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_154MS, TCS34725_GAIN_4X);
         if (tcs->begin(TCS_ADDRESS, &Wire)) {
             tcsPresent = true; tcsErrorCount = 0;
