@@ -30,6 +30,9 @@
 #include <vector>
 #include <algorithm>
 
+// Forward deklaracije
+void processFileForDeletion(const String& fname, const String& todayStr, int& deletedCount, int& skippedCount);
+
 // =============================================================================
 // Skupni CSS + nav
 // =============================================================================
@@ -394,10 +397,11 @@ void handleSDList(AsyncWebServerRequest* request) {
     if (aviFiles.empty()) {
         html += "<p class='dim' style='margin-bottom:12px'>Ni posnetkov.</p>";
     } else {
-        html += "<table><tr><th>Datoteka</th><th>Velikost</th><th>Akcija</th></tr>";
+        html += "<table><tr><th></th><th>Datoteka</th><th>Velikost</th><th>Akcija</th></tr>";
         for (auto& f : aviFiles) {
             String fname = f.name.substring(f.name.lastIndexOf('/') + 1);
-            html += "<tr><td><a class='file-link' href='/sd-file?name=" + f.name + "'>";
+            html += "<tr><td><input type='checkbox' class='del-cb' value='" + f.name + "'></td>";
+            html += "<td><a class='file-link' href='/sd-file?name=" + f.name + "'>";
             html += fname + "</a></td><td>" + fmtBytes(f.size);
             html += "</td><td><a class='btn btn-blue' href='/sd-file?name=" + f.name + "' download>";
             html += "Download</a></td></tr>";
@@ -409,17 +413,66 @@ void handleSDList(AsyncWebServerRequest* request) {
     if (logFiles.empty()) {
         html += "<p class='dim' style='margin-bottom:12px'>Ni logov.</p>";
     } else {
-        html += "<table><tr><th>Datoteka</th><th>Velikost</th><th>Akcija</th></tr>";
+        html += "<table><tr><th></th><th>Datoteka</th><th>Velikost</th><th>Akcija</th></tr>";
         for (auto& f : logFiles) {
             String fname = f.name.substring(f.name.lastIndexOf('/') + 1);
-            html += "<tr><td><span class='tag-log'>LOG</span> ";
+            // Preveri, če je današnji log
+            bool isToday = false;
+            if (fname.startsWith("log_") && fname.endsWith(".txt")) {
+                // Izvleci datum: med "log_" in ".txt"
+                int dateStart = 4; // dolžina "log_"
+                int dateEnd = fname.length() - 4; // dolžina ".txt"
+                if (dateEnd > dateStart) {
+                    String datePart = fname.substring(dateStart, dateEnd);
+                    String todayStr = myTZ.dateTime("Ymd");
+                    if (datePart == todayStr) {
+                        isToday = true;
+                    }
+                }
+            }
+            html += "<tr><td>";
+            if (isToday) {
+                html += "<input type='checkbox' class='del-cb' value='" + f.name + "' disabled>";
+            } else {
+                html += "<input type='checkbox' class='del-cb' value='" + f.name + "'>";
+            }
+            html += "</td><td><span class='tag-log'>LOG</span> ";
             html += "<a class='file-link' href='/sd-file?name=" + f.name + "'>" + fname + "</a>";
+            if (isToday) {
+                html += " <span style='color:#ffc107;margin-left:6px'>DANES</span>";
+            }
             html += "</td><td>" + fmtBytes(f.size);
             html += "</td><td><a class='btn btn-blue' href='/sd-file?name=" + f.name + "' download>";
             html += "Download</a></td></tr>";
         }
         html += "</table>";
     }
+
+    html += R"(
+    <button onclick='deleteSel()' class='btn btn-red' style='margin-top:10px'>
+      Izbriši označene
+    </button>
+
+    <script>
+    function deleteSel() {
+        var cbs = document.querySelectorAll('.del-cb:checked');
+        if (cbs.length === 0) { alert('Ni označenih datotek.'); return; }
+        if (!confirm('Izbrisati ' + cbs.length + ' datotek?')) return;
+        var names = Array.from(cbs).map(c => c.value).join(',');
+        fetch('/api/delete-files', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'files=' + encodeURIComponent(names)
+        })
+        .then(r => r.json())
+        .then(d => {
+            alert(d.message || (d.success ? 'Izbrisano.' : 'Napaka.'));
+            location.reload();
+        })
+        .catch(e => alert('Napaka: ' + e));
+    }
+    </script>
+    )";
 
     html += "</div></body></html>";
     request->send(200, "text/html; charset=utf-8", html);
@@ -507,4 +560,126 @@ window.onload = autoRefresh;
     html += "<p style='color:#444;font-size:11px;margin-top:6px'>SD logi: <a class='file-link' href='/sd-list'>SD datoteke</a></p>";
     html += "</div></body></html>";
     request->send(200, "text/html; charset=utf-8", html);
+}
+
+// =============================================================================
+// POST /api/delete-files — Brisanje označenih SD datotek
+// =============================================================================
+void handleDeleteFiles(AsyncWebServerRequest* request) {
+    LOG_INFO("WEB", "POST /api/delete-files");
+
+    // 1. Preveri parameter "files"
+    if (!request->hasParam("files", true)) {
+        String errJson = "{\"success\":false,\"error\":\"Manjka parameter files\"}";
+        request->send(400, "application/json", errJson);
+        return;
+    }
+
+    String filesParam = request->getParam("files", true)->value();
+    if (filesParam.isEmpty()) {
+        String errJson = "{\"success\":false,\"error\":\"Parameter files je prazen\"}";
+        request->send(400, "application/json", errJson);
+        return;
+    }
+
+    // 2. Preveri SD kartico
+    if (!sdPresent) {
+        String errJson = "{\"success\":false,\"error\":\"SD kartica ni na voljo\"}";
+        request->send(500, "application/json", errJson);
+        return;
+    }
+
+    // 3. Pridobi današnji datum
+    String todayStr = myTZ.dateTime("Ymd");  // YYYYMMDD
+
+    // 4. Inicializiraj števce
+    int deletedCount = 0;
+    int skippedCount = 0;
+
+    // 5. Razčleni CSV seznam
+    int start = 0;
+    int end;
+    while ((end = filesParam.indexOf(',', start)) >= 0) {
+        String fname = filesParam.substring(start, end);
+        fname.trim();
+        start = end + 1;
+
+        // Obdelaj datoteko
+        processFileForDeletion(fname, todayStr, deletedCount, skippedCount);
+    }
+    // Zadnji element
+    String lastFname = filesParam.substring(start);
+    lastFname.trim();
+    if (!lastFname.isEmpty()) {
+        processFileForDeletion(lastFname, todayStr, deletedCount, skippedCount);
+    }
+
+    // 6. Sestavi JSON odgovor
+    String responseJson;
+    if (deletedCount == 0 && skippedCount == 0) {
+        responseJson = "{\"success\":false,\"message\":\"Nobena datoteka ni bila izbrisana\"}";
+    } else if (skippedCount == 0) {
+        responseJson = "{\"success\":true,\"deleted\":" + String(deletedCount) + 
+                      ",\"skipped\":0,\"message\":\"Izbrisano " + String(deletedCount) + " datotek\"}";
+    } else {
+        responseJson = "{\"success\":true,\"deleted\":" + String(deletedCount) + 
+                      ",\"skipped\":" + String(skippedCount) + 
+                      ",\"message\":\"Izbrisano " + String(deletedCount) + 
+                      " datotek, " + String(skippedCount) + " današnjih preskočenih\"}";
+    }
+
+    request->send(200, "application/json", responseJson);
+}
+
+// Pomožna funkcija za obdelavo posamezne datoteke
+void processFileForDeletion(const String& fname, const String& todayStr, int& deletedCount, int& skippedCount) {
+    String sanitized = fname;
+    
+    // a. Trim whitespace
+    sanitized.trim();
+    if (sanitized.isEmpty()) return;
+    
+    // b. Sanitiziraj: odstrani ".." in "\\"
+    if (sanitized.indexOf("..") >= 0 || sanitized.indexOf("\\\\") >= 0) {
+        LOG_WARN("WEB", "Pot '%s' vsebuje nedovoljene znake (.. ali \\\\)", sanitized.c_str());
+        return;
+    }
+    
+    // c. Ime mora se začeti z "/" — če ne, dodaj "/"
+    if (!sanitized.startsWith("/")) {
+        sanitized = "/" + sanitized;
+    }
+    
+    // d. Dovoljeni prefiksi poti: "/log_" ali "/recordings/"
+    if (!sanitized.startsWith("/log_") && !sanitized.startsWith("/recordings/")) {
+        LOG_WARN("WEB", "Nedovoljena datoteka: %s", sanitized.c_str());
+        return;
+    }
+    
+    // e. ZAŠČITA (samo za log datoteke, ne za AVI)
+    if (sanitized.startsWith("/log_")) {
+        // Izvleci datum: med "/log_" in ".txt"
+        int dateStart = 5; // dolžina "/log_"
+        int dateEnd = sanitized.indexOf(".txt");
+        if (dateEnd > dateStart) {
+            String datePart = sanitized.substring(dateStart, dateEnd);
+            if (datePart == todayStr) {
+                LOG_WARN("WEB", "Preskočen današnji log: %s", sanitized.c_str());
+                skippedCount++;
+                return;
+            }
+        }
+    }
+    
+    // f. Brisanje datoteke
+    if (SD.exists(sanitized)) {
+        if (SD.remove(sanitized)) {
+            LOG_INFO("WEB", "Izbrisana datoteka: %s", sanitized.c_str());
+            deletedCount++;
+        } else {
+            LOG_WARN("WEB", "Brisanje datoteke ni uspelo: %s", sanitized.c_str());
+        }
+    } else {
+        LOG_WARN("WEB", "Datoteka ne obstaja: %s", sanitized.c_str());
+    }
 }

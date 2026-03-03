@@ -45,8 +45,9 @@ void setupWebEndpoints() {
     server.on("/sd-list",  HTTP_GET, handleSDList);
     server.on("/sd-file",  HTTP_GET, handleSDFile);
     server.on("/logs",     HTTP_GET, handleLogs);
+    server.on("/api/delete-files", HTTP_POST, handleDeleteFiles);
 
     // /api/ping in /api/reset sta registrirani v http.cpp setupServer() - ne podvajamo!
 
-    LOG_INFO("WEB", "Web UI endpoints registered: /, /settings, /sd-list, /sd-file, /logs");
+    LOG_INFO("WEB", "Web UI endpoints registered: /, /settings, /sd-list, /sd-file, /logs, /api/delete-files");
 }

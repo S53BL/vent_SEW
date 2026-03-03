@@ -24,6 +24,7 @@
 #include "LVGL_Driver.h"
 #include <time.h>
 #include <WiFi.h>
+#include <ezTime.h>
 #include <stdio.h>
 
 static lv_obj_t* main_screen    = nullptr;
@@ -375,11 +376,16 @@ void updateUI() {
     if (now - lastUiUpdate < 1000) { lv_timer_handler(); return; }
     lastUiUpdate = now;
 
-    time_t t = time(nullptr);
-    struct tm* ti = localtime(&t);
     char tbuf[10], dbuf[12];
-    strftime(tbuf, sizeof(tbuf), "%H:%M:%S", ti);
-    strftime(dbuf, sizeof(dbuf), "%d.%m.%Y", ti);
+    if (timeSynced) {
+        snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d",
+                 myTZ.hour(), myTZ.minute(), myTZ.second());
+        snprintf(dbuf, sizeof(dbuf), "%02d.%02d.%04d",
+                 myTZ.day(), myTZ.month(), myTZ.year());
+    } else {
+        strlcpy(tbuf, "--:--:--", sizeof(tbuf));
+        strlcpy(dbuf, "--.--.----", sizeof(dbuf));
+    }
     lv_label_set_text(lbl_time, tbuf);
     lv_label_set_text(lbl_date, dbuf);
 
