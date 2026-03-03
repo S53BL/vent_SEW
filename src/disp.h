@@ -7,7 +7,7 @@
 //
 // Touch:
 //   tap zgornji del -> detail screen (senzorji + OpenMeteo + sistem)
-//   tap spodnji del -> graphNextSensor()
+//   tap spodnji del -> naslednji senzor (cycle sensor)
 //
 #pragma once
 #include <Arduino.h>

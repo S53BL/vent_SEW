@@ -191,7 +191,7 @@ void initDisplay() {
 }
 
 static void top_touch_cb(lv_event_t* e)   { (void)e; showDetailScreen(); }
-static void graph_touch_cb(lv_event_t* e) { (void)e; graphNextSensor(); }
+static void graph_touch_cb(lv_event_t* e) { (void)e; currentGraphSensor = (currentGraphSensor + 1) % GRAPH_COUNT; graphRefresh(); }
 static void detail_touch_cb(lv_event_t* e){ (void)e; hideDetailScreen(); }
 static void detail_timer_cb(lv_timer_t* t){ (void)t; hideDetailScreen(); }
 
