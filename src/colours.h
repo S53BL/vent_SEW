@@ -16,8 +16,8 @@
 
 // --- Tekst ---
 #define COL_TEXT_PRIMARY    0xFFFFFF   // Beli tekst - vrednosti
-#define COL_TEXT_SECONDARY  0xAAAAAA   // Sivi tekst - oznake
-#define COL_TEXT_DIM        0x555555   // Zelo svetlo - neaktivno
+#define COL_TEXT_SECONDARY  0xDDDDDD   // Zelo svetla siva, skoraj bela - oznake
+#define COL_TEXT_DIM        0x888888   // Srednje svetla siva - neaktivno
 
 // --- Akcenti ---
 #define COL_ACCENT_BLUE     0x4DA6FF   // Glavni poudarek

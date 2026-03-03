@@ -122,14 +122,14 @@ void initGraph(lv_obj_t* parent, int x, int y, int w, int h) {
 
     lbl_name = lv_label_create(cont);
     lv_obj_set_pos(lbl_name, 4, 2);
-    lv_obj_set_style_text_color(lbl_name, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_name, lv_color_hex(COL_TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_14, 0);
     lv_label_set_text(lbl_name, graphSensorName(currentGraphSensor));
 
     lbl_unit = lv_label_create(cont);
-    lv_obj_set_pos(lbl_unit, 4, 16);
-    lv_obj_set_style_text_font(lbl_unit, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(lbl_unit, lv_color_hex(0x888888), 0);
+    lv_obj_set_pos(lbl_unit, 4, 20); // premaknjen za 4 piksle navzdol zaradi večjega fonta
+    lv_obj_set_style_text_font(lbl_unit, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_unit, lv_color_hex(COL_TEXT_DIM), 0);
     lv_label_set_text(lbl_unit, graphSensorUnit(currentGraphSensor));
 
     lbl_current = lv_label_create(cont);
@@ -139,9 +139,9 @@ void initGraph(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_label_set_text(lbl_current, "--");
 
     lbl_minmax = lv_label_create(cont);
-    lv_obj_align(lbl_minmax, LV_ALIGN_TOP_RIGHT, -4, 20);
-    lv_obj_set_style_text_font(lbl_minmax, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(lbl_minmax, lv_color_hex(0x666688), 0);
+    lv_obj_align(lbl_minmax, LV_ALIGN_TOP_RIGHT, -4, 22); // premaknjen za 2 piksla navzdol zaradi večjega fonta
+    lv_obj_set_style_text_font(lbl_minmax, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_minmax, lv_color_hex(COL_TEXT_DIM), 0);
     lv_label_set_text(lbl_minmax, "");
 
     chart = lv_chart_create(cont);

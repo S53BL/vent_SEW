@@ -93,23 +93,23 @@ void initDisplay() {
 
     // Datum
     lbl_date = lv_label_create(top_panel);
-    lv_obj_set_pos(lbl_date, 10, 40);
-    lv_obj_set_style_text_font(lbl_date, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_date, lv_color_hex(0x8888AA), 0);
+    lv_obj_set_pos(lbl_date, 10, 38); // premaknjen za 2 piksla navzgor zaradi večjega fonta
+    lv_obj_set_style_text_font(lbl_date, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl_date, lv_color_hex(0xAAAAFF), 0);
     lv_label_set_text(lbl_date, "--.--.----");
 
     // WiFi ikona (desno zgoraj)
     lbl_wifi = lv_label_create(top_panel);
     lv_obj_set_pos(lbl_wifi, SCR_W - 40, 8);
     lv_obj_set_style_text_font(lbl_wifi, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_wifi, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_color(lbl_wifi, lv_color_hex(0xCCCCCC), 0);
     lv_label_set_text(lbl_wifi, LV_SYMBOL_WIFI);
 
     // Vremenski simbol
     lbl_weather = lv_label_create(top_panel);
-    lv_obj_set_pos(lbl_weather, SCR_W - 60, 28);
-    lv_obj_set_style_text_font(lbl_weather, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_weather, lv_color_hex(0x7799BB), 0);
+    lv_obj_set_pos(lbl_weather, SCR_W - 60, 26); // premaknjen za 2 piksla navzgor zaradi večjega fonta
+    lv_obj_set_style_text_font(lbl_weather, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_weather, lv_color_hex(0x99BBFF), 0);
     lv_label_set_text(lbl_weather, "...");
 
     // Locilna linija
@@ -130,9 +130,9 @@ void initDisplay() {
         return l;
     };
 
-    const lv_font_t* fSmall = &lv_font_montserrat_12;
+    const lv_font_t* fSmall = &lv_font_montserrat_14; // povečano iz 12 na 14
     const lv_font_t* fVal   = &lv_font_montserrat_16;
-    lv_color_t cLbl = lv_color_hex(0x888888);
+    lv_color_t cLbl = lv_color_hex(COL_TEXT_SECONDARY); // uporabi svetlo sivo iz colours.h
 
     makeLbl(top_panel, 8, 64, fSmall, cLbl, "T");
     lbl_temp = makeLbl(top_panel, 22, 62, fVal, lv_color_hex(0xFF8080), "--.-C");
@@ -150,7 +150,7 @@ void initDisplay() {
     lbl_lux = makeLbl(top_panel, 35, 106, fVal, lv_color_hex(0xFFF176), "----");
 
     makeLbl(top_panel, SCR_W/2, 108, fSmall, cLbl, "PIR");
-    lbl_pir = makeLbl(top_panel, SCR_W/2+30, 106, fVal, lv_color_hex(0x444444), LV_SYMBOL_BELL);
+    lbl_pir = makeLbl(top_panel, SCR_W/2+30, 106, fVal, lv_color_hex(COL_TEXT_SECONDARY), LV_SYMBOL_BELL);
 
     // SPODNJI DEL (graf)
     lv_obj_t* bot_panel = lv_obj_create(main_screen);
@@ -197,9 +197,9 @@ void showDetailScreen() {
     };
 
     auto addRow = [&](const char* label, const char* value, lv_color_t col) {
-        addLabel(8,   y, &lv_font_montserrat_12, lv_color_hex(0x777799), label);
-        addLabel(110, y, &lv_font_montserrat_12, col, value);
-        y += 16;
+        addLabel(8,   y, &lv_font_montserrat_14, lv_color_hex(COL_TEXT_SECONDARY), label);
+        addLabel(110, y, &lv_font_montserrat_14, col, value);
+        y += 18; // povečamo razmik zaradi večjega fonta
     };
 
     auto addSep = [&](lv_color_t col) {
@@ -217,8 +217,8 @@ void showDetailScreen() {
     addSep(lv_color_hex(0x2A2A50));
 
     // Senzorji
-    addLabel(8, y, &lv_font_montserrat_12, lv_color_hex(0x4488CC), "Senzorji");
-    y += 16;
+    addLabel(8, y, &lv_font_montserrat_14, lv_color_hex(COL_ACCENT_BLUE), "Senzorji");
+    y += 18;
 
     const SensorData& sd = sensorData;
 
@@ -272,7 +272,7 @@ void showDetailScreen() {
     }
 
     snprintf(buf, sizeof(buf), "%s x%d", sd.motion ? "DA" : "ne", sd.motionCount);
-    addRow("Gibanje:", buf, sd.motion ? lv_color_hex(0xFF6644) : lv_color_hex(0x555555));
+    addRow("Gibanje:", buf, sd.motion ? lv_color_hex(0xFF6644) : lv_color_hex(COL_TEXT_DIM));
 
     if (sd.bat > ERR_FLOAT && sd.bat > 2.5f) {
         int pct = (int)sd.batPct;
@@ -284,8 +284,8 @@ void showDetailScreen() {
 
     // Vreme
     addSep(lv_color_hex(0x2A2A50));
-    addLabel(8, y, &lv_font_montserrat_12, lv_color_hex(0x44AACC), "Vreme (OpenMeteo)");
-    y += 16;
+    addLabel(8, y, &lv_font_montserrat_14, lv_color_hex(COL_ACCENT_TEAL), "Vreme (OpenMeteo)");
+    y += 18;
 
     if (weatherData.valid) {
         snprintf(buf, sizeof(buf), "%s (%d)", weatherCodeToStr(weatherData.weatherCode), weatherData.weatherCode);
@@ -317,13 +317,13 @@ void showDetailScreen() {
             addRow("Vlaznost tal:", buf, lv_color_hex(0x64B5F6));
         }
     } else {
-        addRow("Vreme:", "N/A", lv_color_hex(0x555555));
+        addRow("Vreme:", "N/A", lv_color_hex(COL_TEXT_DIM));
     }
 
     // Sistem
     addSep(lv_color_hex(0x2A2A50));
-    addLabel(8, y, &lv_font_montserrat_12, lv_color_hex(0x668844), "Sistem");
-    y += 16;
+    addLabel(8, y, &lv_font_montserrat_14, lv_color_hex(COL_OK), "Sistem");
+    y += 18;
 
     addRow("ID:", settings.unitId, white);
     if (WiFi.status() == WL_CONNECTED)
@@ -344,8 +344,8 @@ void showDetailScreen() {
     // Footer
     lv_obj_t* footer = lv_label_create(detail_screen);
     lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_obj_set_style_text_font(footer, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(footer, lv_color_hex(0x444455), 0);
+    lv_obj_set_style_text_font(footer, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(footer, lv_color_hex(COL_TEXT_DIM), 0);
     lv_label_set_text(footer, "tap za nazaj - auto " LV_SYMBOL_CLOSE);
 
     lv_scr_load_anim(detail_screen, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
@@ -426,7 +426,7 @@ void updateUI() {
     }
 
     lv_obj_set_style_text_color(lbl_pir,
-        sd.motion ? lv_color_hex(0xFF6644) : lv_color_hex(0x333333), 0);
+        sd.motion ? lv_color_hex(0xFF6644) : lv_color_hex(COL_TEXT_SECONDARY), 0);
 
     graphRefresh();
     lv_timer_handler();
