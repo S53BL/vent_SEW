@@ -67,6 +67,10 @@ unsigned long lastTouchMs          = 0;
 unsigned long lastConnectionFailMs = 0;
 bool retryAttempted                = false;
 
+// Graf: glavna 3-minutna zanka
+unsigned long lastMainCycleMs  = 0;
+int           currentGraphHours = 4;   // privzeto: 4h okno
+
 // --- SD mutex (logging.cpp in sd_card.cpp ga rabita) ---
 SemaphoreHandle_t sdMutex = NULL;
 
@@ -206,6 +210,8 @@ void initGlobals() {
     lastTouchMs          = 0;
     lastConnectionFailMs = 0;
     retryAttempted       = false;
+    lastMainCycleMs      = 0;
+    currentGraphHours    = 4;
 
     sdMutex = xSemaphoreCreateMutex();
     if (!sdMutex) LOG_ERROR("Globals", "SD mutex failed!");

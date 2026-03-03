@@ -225,6 +225,10 @@ extern unsigned long lastTouchMs;
 extern unsigned long lastConnectionFailMs;
 extern bool retryAttempted;
 
+// --- Graf: glavna 3-minutna zanka ---
+extern unsigned long lastMainCycleMs;  // čas zadnjega 3-min cikla
+extern int           currentGraphHours; // trenutno prikazano časovno okno (2/4/8/16/24)
+
 // --- Logging (definirano v logging.cpp, ne v globals.cpp!) ---
 // POZOR: logBuffer in loggingInitialized sta definirani v logging.cpp
 // globals.cpp jih NE sme definirati - samo extern deklaracija tukaj

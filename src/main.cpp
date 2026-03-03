@@ -44,6 +44,7 @@
 #include "cam.h"
 #include "disp.h"
 #include "disp_graph.h"
+#include "graph_store.h"
 #include "weather.h"
 
 #include <WiFi.h>
@@ -198,7 +199,17 @@ void setup() {
     initWeather();
     if (WiFi.status() == WL_CONNECTED) fetchWeatherNow();
 
-    // 11. Startup validacija
+    // 11. Graf: inicializacija LittleFS ring bufferja
+    // graphStoreInit() ustvari/validira /graph.bin na LittleFS
+    // graphStoreLoad() naloži obstoječo zgodovino v RAM → graf ni prazen po restartu
+    if (!graphStoreInit()) {
+        LOG_WARN("MAIN", "graph_store init failed - graphs will be empty");
+    } else {
+        graphStoreLoad();
+        LOG_INFO("MAIN", "graph_store OK: %d points loaded", gsCount);
+    }
+
+    // 12. Startup validacija
     checkAllDevices();
 
     // Inicializiraj timing vars (globals)
@@ -259,18 +270,35 @@ void loop() {
     // Weather update (non-blocking, interno preverja interval)
     updateWeather();
 
-    // Graf: dodaj točko ob novem uspešnem branju senzorja
-    if (newSensorData) {
-        newSensorData = false;
-        GraphPoint pt;
-        pt.ts    = (unsigned long)time(nullptr);
-        pt.temp  = sensorData.temp;
-        pt.hum   = sensorData.hum;
-        pt.press = sensorData.press;
-        pt.iaq   = (float)sensorData.iaq;
-        pt.co2   = sensorData.eCO2;
-        pt.lux   = sensorData.lux;
-        graphAddPoint(pt);
+    // --- Glavna 3-minutna zanka ---
+    // Vse operacije ki se dotikajo podatkov tečejo skupaj vsake 3 minute.
+    // DATA_SEND_INTERVAL je definiran v config.h kot 180000UL (3 min).
+    // newSensorData flag (iz sens.cpp) se ne briše tukaj — ostane za disp.cpp
+    if (now - lastMainCycleMs >= DATA_SEND_INTERVAL) {
+        lastMainCycleMs = now;
+
+        // 1. Shrani točko v LittleFS ring buffer (graph_store)
+        //    Samo če imamo vsaj veljavno temperaturo
+        if (sensorData.temp > -900.0f) {
+            GraphStorePoint pt;
+            pt.ts     = (uint32_t)time(nullptr);
+            pt.temp   = sensorData.temp;
+            pt.hum    = sensorData.hum;
+            pt.iaq    = (float)sensorData.iaq;
+            pt.wind   = weatherData.valid ? weatherData.windSpeed : 0.0f;
+            pt.motion = sensorData.motionCount;
+            pt.pad    = 0;
+            graphStoreAdd(pt);
+
+            // 2. Osvezi LVGL graf na zaslonu
+            graphRefresh();
+
+            LOG_INFO("MAIN", "3min cycle: T=%.1f H=%.1f IAQ=%d pts=%d",
+                     sensorData.temp, sensorData.hum, sensorData.iaq, gsCount);
+        }
+
+        // 3. Flush log RAM bufferja na SD (premaknjen sem iz 60s timera)
+        if (sdPresent) flushBufferToSD();
     }
 
     // Kamera - podaljšanje snemanja ob gibanju
@@ -278,13 +306,6 @@ void loop() {
 
     // LVGL / zaslon update
     updateUI();
-
-    // Flush log bufferja na SD vsako minuto
-    static unsigned long lastFlush = 0;
-    if (now - lastFlush >= 60000UL) {
-        lastFlush = now;
-        if (sdPresent) flushBufferToSD();
-    }
 
     // BSEC2 mora biti klican pogosto (vsaj vsake ~3s za LP mode)
     // run() je neblokirajoča - varno klicati pri vsakem loop() prehodu

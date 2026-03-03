@@ -1,6 +1,6 @@
 // graph_store.h - LittleFS ring buffer za zgodovino grafov (vent_SEW)
 //
-// Shrani do 480 GraphPoint zapisov (24h pri 3-min intervalu) v /graph.bin.
+// Shrani do 480 GraphStorePoint zapisov (24h pri 3-min intervalu) v /graph.bin.
 // Ring buffer deluje brez premikanja podatkov — samo head kazalec se premika.
 // Ob restartu graphStoreLoad() obnovi RAM buffer iz LittleFS.
 //
@@ -8,7 +8,7 @@
 //   [0..3]   magic   uint32_t  0xC0FFEE01
 //   [4..7]   head    uint32_t  indeks naslednjega zapisa (0..479)
 //   [8..11]  count   uint32_t  stevilo veljavnih zapisov (0..480)
-//   [12+]    data    GraphPoint[480]
+//   [12+]    data    GraphStorePoint[480]
 //
 // Skupaj: 12 + 480*24 = 11532 bytes (~11.3 KB)
 
@@ -17,9 +17,9 @@
 #include <LittleFS.h>
 
 // -----------------------------------------------------------------------
-// GraphPoint — ena meritev (24 bytes, poravnana)
+// GraphStorePoint — ena meritev za shranjevanje (24 bytes, poravnana)
 // -----------------------------------------------------------------------
-struct GraphPoint {
+struct GraphStorePoint {
     uint32_t ts;        // Unix timestamp [s]           (4 bytes)
     float    temp;      // Temperatura [°C]             (4 bytes)
     float    hum;       // Relativna vlažnost [%]       (4 bytes)
@@ -28,7 +28,7 @@ struct GraphPoint {
     uint16_t motion;    // Število PIR dogodkov v uri   (2 bytes)
     uint16_t pad;       // Poravnava na 24 bytes        (2 bytes)
 };
-static_assert(sizeof(GraphPoint) == 24, "GraphPoint mora biti 24 bytes");
+static_assert(sizeof(GraphStorePoint) == 24, "GraphStorePoint mora biti 24 bytes");
 
 // -----------------------------------------------------------------------
 // Konstante
@@ -46,7 +46,7 @@ static_assert(sizeof(GraphPoint) == 24, "GraphPoint mora biti 24 bytes");
 // -----------------------------------------------------------------------
 // RAM buffer (extern — dostopen za graphRefresh v disp_graph.cpp)
 // -----------------------------------------------------------------------
-extern GraphPoint gsHistory[GRAPH_STORE_MAX_POINTS];
+extern GraphStorePoint gsHistory[GRAPH_STORE_MAX_POINTS];
 extern int        gsHead;    // indeks najstarejšega veljavnega zapisa
 extern int        gsCount;   // število veljavnih zapisov (0..480)
 
@@ -65,11 +65,11 @@ void graphStoreLoad();
 
 // Doda novo točko v ring buffer (RAM + LittleFS atomično)
 // Kliči enkrat vsake 3 minute iz glavne zanke
-void graphStoreAdd(const GraphPoint& pt);
+void graphStoreAdd(const GraphStorePoint& pt);
 
 // Vrne kazalec na točko po logičnem indeksu (0 = najstarejša, gsCount-1 = najnovejša)
 // Vrne nullptr če idx izven dosega
-const GraphPoint* graphStoreGet(int idx);
+const GraphStorePoint* graphStoreGet(int idx);
 
 // Izbriše /graph.bin in ponastavi RAM buffer (za debug/reset)
 void graphStoreClear();

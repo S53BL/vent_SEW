@@ -6,7 +6,7 @@
 // -----------------------------------------------------------------------
 // RAM buffer
 // -----------------------------------------------------------------------
-GraphPoint gsHistory[GRAPH_STORE_MAX_POINTS];
+GraphStorePoint gsHistory[GRAPH_STORE_MAX_POINTS];
 int        gsHead  = 0;
 int        gsCount = 0;
 
@@ -16,7 +16,7 @@ int        gsCount = 0;
 
 // Izračuna file offset za zapis pri danem fizičnem indeksu
 static uint32_t _pointOffset(int physIdx) {
-    return (uint32_t)(GRAPH_STORE_DATA_OFFSET + physIdx * (int)sizeof(GraphPoint));
+    return (uint32_t)(GRAPH_STORE_DATA_OFFSET + physIdx * (int)sizeof(GraphStorePoint));
 }
 
 // Zapiše glavo (head + count) v datoteko na pozicijo 4
@@ -39,7 +39,7 @@ bool graphStoreInit() {
 
     // Preveri ali datoteka obstaja in ima pravilno velikost
     const size_t expectedSize = GRAPH_STORE_HEADER_SIZE
-                              + GRAPH_STORE_MAX_POINTS * sizeof(GraphPoint);
+                              + GRAPH_STORE_MAX_POINTS * sizeof(GraphStorePoint);
 
     if (LittleFS.exists(GRAPH_STORE_FILE)) {
         File f = LittleFS.open(GRAPH_STORE_FILE, "r");
@@ -78,9 +78,9 @@ bool graphStoreInit() {
     f.write((uint8_t*)&zero, 4);
 
     // Zapiši prazne točke
-    GraphPoint emptyPt = {};
+    GraphStorePoint emptyPt = {};
     for (int i = 0; i < GRAPH_STORE_MAX_POINTS; i++) {
-        f.write((uint8_t*)&emptyPt, sizeof(GraphPoint));
+        f.write((uint8_t*)&emptyPt, sizeof(GraphStorePoint));
     }
     f.close();
 
@@ -123,7 +123,7 @@ void graphStoreLoad() {
 
     // Preberi vse točke
     f.seek(GRAPH_STORE_DATA_OFFSET);
-    f.read((uint8_t*)gsHistory, GRAPH_STORE_MAX_POINTS * sizeof(GraphPoint));
+    f.read((uint8_t*)gsHistory, GRAPH_STORE_MAX_POINTS * sizeof(GraphStorePoint));
     f.close();
 
     LOG_INFO("GSTORE", "Loaded %d points (head=%d)", gsCount, gsHead);
@@ -132,7 +132,7 @@ void graphStoreLoad() {
 // -----------------------------------------------------------------------
 // graphStoreAdd
 // -----------------------------------------------------------------------
-void graphStoreAdd(const GraphPoint& pt) {
+void graphStoreAdd(const GraphStorePoint& pt) {
     int physIdx;
 
     if (gsCount < GRAPH_STORE_MAX_POINTS) {
@@ -160,7 +160,7 @@ void graphStoreAdd(const GraphPoint& pt) {
         f.close();
         return;
     }
-    f.write((uint8_t*)&pt, sizeof(GraphPoint));
+    f.write((uint8_t*)&pt, sizeof(GraphStorePoint));
 
     // Posodobi glavo
     _writeHeader(f, (uint32_t)gsHead, (uint32_t)gsCount);
@@ -171,7 +171,7 @@ void graphStoreAdd(const GraphPoint& pt) {
 // -----------------------------------------------------------------------
 // graphStoreGet
 // -----------------------------------------------------------------------
-const GraphPoint* graphStoreGet(int idx) {
+const GraphStorePoint* graphStoreGet(int idx) {
     if (idx < 0 || idx >= gsCount) return nullptr;
     int physIdx = (gsHead + idx) % GRAPH_STORE_MAX_POINTS;
     return &gsHistory[physIdx];
