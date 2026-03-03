@@ -7,7 +7,7 @@
 //   - Swipe levo/desno: menja sensor; kratek dotik: zoom in; dolgi: zoom out
 //   - calcYRange(): dinamična Y os z minimalnim razponom (preprečuje "drama")
 //   - NVS persistenca: saveGraphPrefs() / loadGraphPrefs()
-//   - LVGL8 API: lv_chart_set_value_by_id() — brez direktnega dostopa na y_points
+//   - LVGL API: direkten dostop ser->y_points[i] — lv_chart_set_value_by_id() ne obstaja v tej verziji LVGL
 
 #include "disp_graph.h"
 #include "graph_store.h"
@@ -311,6 +311,10 @@ void initGraph(lv_obj_t* parent, int x, int y, int w, int h) {
     ser = lv_chart_add_series(chart, graphSensorColor(currentGraphSensor), LV_CHART_AXIS_PRIMARY_Y);
     lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
 
+    // Dotik na chart mora se propagirati navzgor do graphCont kjer je handler registriran
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_EVENT_BUBBLE);
+
     LOG_INFO("GRAPH", "Graph initialized (%dx%d) at (%d,%d) sensor=%d hours=%d",
              w, h, x, y, currentGraphSensor, currentGraphHours);
 }
@@ -408,7 +412,7 @@ void graphRefresh() {
         // Zapiši vrednosti — bucket 0 je najnovejši, prikazujemo od starega k novemu
         for (int i = 0; i < numBuckets; i++) {
             int bucketFromEnd = numBuckets - 1 - i;  // obrni: levo=staro, desno=novo
-            lv_chart_set_value_by_id(chart, ser, i, motionBuckets[bucketFromEnd]);
+            ser->y_points[i] = (lv_coord_t)motionBuckets[bucketFromEnd];
         }
         lv_chart_refresh(chart);
 
@@ -441,10 +445,10 @@ void graphRefresh() {
                        (lv_coord_t)(yMin * 10.0f),
                        (lv_coord_t)(yMax * 10.0f));
 
-    // --- 8. Zapiši točke v LVGL (LVGL8 API — ne direktno y_points!) ---
+    // --- 8. Zapiši točke v LVGL (direkten dostop — lv_chart_set_value_by_id ne obstaja v tej verziji) ---
     lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
     for (int i = 0; i < validPts; i++) {
-        lv_chart_set_value_by_id(chart, ser, i, vals[i]);
+        ser->y_points[i] = vals[i];
     }
     lv_chart_refresh(chart);
 
