@@ -48,11 +48,16 @@ int currentGraphSensor = GRAPH_TEMP;
 static lv_obj_t*          graphCont    = nullptr;  // zunanji container
 static lv_obj_t*          chart        = nullptr;
 static lv_chart_series_t* ser          = nullptr;
-static lv_obj_t*          lbl_name     = nullptr;
-static lv_obj_t*          lbl_unit     = nullptr;
-static lv_obj_t*          lbl_current  = nullptr;
-static lv_obj_t*          lbl_minmax   = nullptr;
-static lv_obj_t*          lbl_hours    = nullptr;  // prikaz "4h", "8h" itd.
+static lv_obj_t*          lbl_name     = nullptr;  // ime senzorja + ure (levo, glava)
+static lv_obj_t*          lbl_minmax   = nullptr;  // min/max (desno, glava)
+
+// Oznake osi (3x Y, 3x X)
+static lv_obj_t*          lbl_ymax     = nullptr;  // Y os: zgornja vrednost
+static lv_obj_t*          lbl_ymid     = nullptr;  // Y os: srednja vrednost
+static lv_obj_t*          lbl_ymin     = nullptr;  // Y os: spodnja vrednost
+static lv_obj_t*          lbl_xL       = nullptr;  // X os: levo  "-Nh"
+static lv_obj_t*          lbl_xM       = nullptr;  // X os: sredina "-N/2h"
+static lv_obj_t*          lbl_xR       = nullptr;  // X os: desno "0"
 
 // -----------------------------------------------------------------------
 // Touch detekcija (swipe / kratek / dolgi dotik)
@@ -211,9 +216,7 @@ static void graphTouchHandler(lv_event_t* e) {
             if (chart && ser) {
                 lv_chart_set_series_color(chart, ser, graphSensorColor(currentGraphSensor));
             }
-            if (lbl_name) lv_label_set_text(lbl_name, graphSensorName(currentGraphSensor));
-            if (lbl_unit) lv_label_set_text(lbl_unit, graphSensorUnit(currentGraphSensor));
-            if (lbl_current) lv_obj_set_style_text_color(lbl_current, graphSensorColor(currentGraphSensor), 0);
+            // lbl_name se posodobi spodaj skupaj z urami
 
         } else if (duration < 500) {
             // KRATEK DOTIK — zoom in (krajše časovno okno)
@@ -223,11 +226,11 @@ static void graphTouchHandler(lv_event_t* e) {
             graphZoomOut();
         }
 
-        // Posodobi prikaz ur in osveži graf
-        if (lbl_hours) {
-            char buf[8];
-            snprintf(buf, sizeof(buf), "%dh", currentGraphHours);
-            lv_label_set_text(lbl_hours, buf);
+        // Posodobi ime senzorja z novimi urami v glavi
+        if (lbl_name) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%s  %dh", graphSensorName(currentGraphSensor), currentGraphHours);
+            lv_label_set_text(lbl_name, buf);
         }
         saveGraphPrefs();
         graphRefresh();
@@ -257,49 +260,78 @@ void initGraph(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_obj_add_event_cb(graphCont, graphTouchHandler, LV_EVENT_PRESSED,   nullptr);
     lv_obj_add_event_cb(graphCont, graphTouchHandler, LV_EVENT_RELEASED,  nullptr);
 
-    // Labela: ime senzorja (levo zgoraj)
+    // Glava — 1 vrstica: ime senzorja + ure (levo), min/max (desno), font 16, bela
     lbl_name = lv_label_create(graphCont);
-    lv_obj_set_pos(lbl_name, 4, 2);
-    lv_obj_set_style_text_color(lbl_name, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_12, 0);
-    lv_label_set_text(lbl_name, graphSensorName(currentGraphSensor));
-
-    // Labela: enota (levo, pod imenom)
-    lbl_unit = lv_label_create(graphCont);
-    lv_obj_set_pos(lbl_unit, 4, 16);
-    lv_obj_set_style_text_font(lbl_unit, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(lbl_unit, lv_color_hex(0x888888), 0);
-    lv_label_set_text(lbl_unit, graphSensorUnit(currentGraphSensor));
-
-    // Labela: trenutna vrednost (desno zgoraj)
-    lbl_current = lv_label_create(graphCont);
-    lv_obj_align(lbl_current, LV_ALIGN_TOP_RIGHT, -4, 2);
-    lv_obj_set_style_text_font(lbl_current, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_current, graphSensorColor(currentGraphSensor), 0);
-    lv_label_set_text(lbl_current, "--");
-
-    // Labela: min/max ali časovno okno (desno, pod current)
-    lbl_minmax = lv_label_create(graphCont);
-    lv_obj_align(lbl_minmax, LV_ALIGN_TOP_RIGHT, -4, 20);
-    lv_obj_set_style_text_font(lbl_minmax, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(lbl_minmax, lv_color_hex(0x666688), 0);
-    lv_label_set_text(lbl_minmax, "");
-
-    // Labela: časovno okno (levo spodaj od naslova, npr. "4h")
-    lbl_hours = lv_label_create(graphCont);
-    lv_obj_set_pos(lbl_hours, 4, 28);
-    lv_obj_set_style_text_font(lbl_hours, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(lbl_hours, lv_color_hex(0x555577), 0);
+    lv_obj_set_pos(lbl_name, 4, 4);
+    lv_obj_set_style_text_color(lbl_name, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_16, 0);
     {
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%dh", currentGraphHours);
-        lv_label_set_text(lbl_hours, buf);
+        char nameBuf[32];
+        snprintf(nameBuf, sizeof(nameBuf), "%s  %dh", graphSensorName(currentGraphSensor), currentGraphHours);
+        lv_label_set_text(lbl_name, nameBuf);
     }
 
-    // LVGL chart widget
+    lbl_minmax = lv_label_create(graphCont);
+    lv_obj_align(lbl_minmax, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_set_style_text_font(lbl_minmax, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl_minmax, lv_color_hex(0xFFFFFF), 0);
+    lv_label_set_text(lbl_minmax, "");
+
+    // -----------------------------------------------------------------------
+    // Y osi oznake (3 vrednosti: max, mid, min) — levo od chart-a
+    // -----------------------------------------------------------------------
+    // Chart začne pri x=26 (prostor za Y oznake) in y=40
+    // Chart dimenzije: (w-34) × (h-62)
+    // Za w=236, h=186: chart = 202×124, Y oznake na x=0..24
+    const lv_font_t* fAxis  = &lv_font_montserrat_14;
+    lv_color_t       cAxis  = lv_color_hex(0xFFFFFF);
+    int chartX = 32, chartY = 24;
+    int chartW = w - 40, chartH = h - 48;
+
+    auto makeAxisLbl = [&](int ax, int ay, int aw, const char* txt) -> lv_obj_t* {
+        lv_obj_t* l = lv_label_create(graphCont);
+        lv_obj_set_pos(l, ax, ay);
+        lv_obj_set_width(l, aw);
+        lv_obj_set_style_text_font(l, fAxis, 0);
+        lv_obj_set_style_text_color(l, cAxis, 0);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_label_set_text(l, txt);
+        return l;
+    };
+
+    lbl_ymax = makeAxisLbl(0, chartY,                        chartX - 2, "--");
+    lbl_ymid = makeAxisLbl(0, chartY + chartH / 2 - 5,      chartX - 2, "--");
+    lbl_ymin = makeAxisLbl(0, chartY + chartH - 10,         chartX - 2, "--");
+
+    // -----------------------------------------------------------------------
+    // X osi oznake (3 vrednosti: -Nh, -N/2h, 0) — pod chart-om
+    // -----------------------------------------------------------------------
+    int xAxisY = chartY + chartH + 2;
+
+    lbl_xL = lv_label_create(graphCont);
+    lv_obj_set_pos(lbl_xL, chartX, xAxisY);
+    lv_obj_set_style_text_font(lbl_xL, fAxis, 0);
+    lv_obj_set_style_text_color(lbl_xL, cAxis, 0);
+    lv_label_set_text(lbl_xL, "--h");
+
+    lbl_xM = lv_label_create(graphCont);
+    lv_obj_set_pos(lbl_xM, chartX + chartW / 2 - 12, xAxisY);
+    lv_obj_set_style_text_font(lbl_xM, fAxis, 0);
+    lv_obj_set_style_text_color(lbl_xM, cAxis, 0);
+    lv_label_set_text(lbl_xM, "--h");
+
+    lbl_xR = lv_label_create(graphCont);
+    lv_obj_set_pos(lbl_xR, chartX + chartW - 8, xAxisY);
+    lv_obj_set_style_text_font(lbl_xR, fAxis, 0);
+    lv_obj_set_style_text_color(lbl_xR, cAxis, 0);
+    lv_label_set_text(lbl_xR, "0");
+
+    // -----------------------------------------------------------------------
+    // LVGL chart widget — pomaknjeno desno za Y os oznake
+    // -----------------------------------------------------------------------
     chart = lv_chart_create(graphCont);
-    lv_obj_set_pos(chart, 0, 40);
-    lv_obj_set_size(chart, w - 8, h - 48);
+    lv_obj_set_pos(chart, chartX, chartY);
+    lv_obj_set_size(chart, chartW, chartH);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, DISPLAY_POINTS_MAX);
     lv_chart_set_div_line_count(chart, 3, 0);
@@ -334,8 +366,7 @@ void graphRefresh() {
         float val = weatherData.valid ? weatherData.windSpeed : 0.0f;
         if (!weatherData.valid) {
             lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
-            lv_label_set_text(lbl_current, "--");
-            lv_label_set_text(lbl_minmax, "Ni podatkov");
+        lv_label_set_text(lbl_minmax, "Ni podatkov");
             lv_chart_refresh(chart);
             return;
         }
@@ -416,9 +447,20 @@ void graphRefresh() {
         }
         lv_chart_refresh(chart);
 
+        // Y osi oznake za stolpčni graf (0 .. yMax/2 .. yMax)
+        char bufY[8];
+        snprintf(bufY, sizeof(bufY), "%d", yMax);     lv_label_set_text(lbl_ymax, bufY);
+        snprintf(bufY, sizeof(bufY), "%d", yMax / 2); lv_label_set_text(lbl_ymid, bufY);
+        lv_label_set_text(lbl_ymin, "0");
+
+        // X osi oznake
+        char xbuf[8];
+        snprintf(xbuf, sizeof(xbuf), "-%dh", currentGraphHours);     lv_label_set_text(lbl_xL, xbuf);
+        snprintf(xbuf, sizeof(xbuf), "-%dh", currentGraphHours / 2); lv_label_set_text(lbl_xM, xbuf);
+        lv_label_set_text(lbl_xR, "0");
+
+        // Glava: max v/h
         char bufCur[16];
-        snprintf(bufCur, sizeof(bufCur), "%d ev", motionBuckets[0]);
-        lv_label_set_text(lbl_current, bufCur);
         snprintf(bufCur, sizeof(bufCur), "max %d/h", maxEvents);
         lv_label_set_text(lbl_minmax, bufCur);
         return;
@@ -431,7 +473,6 @@ void graphRefresh() {
     // --- 6. Preveri ali imamo dovolj podatkov ---
     if (validPts < 2) {
         lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
-        if (lbl_current) lv_label_set_text(lbl_current, "--");
         if (lbl_minmax)  lv_label_set_text(lbl_minmax, "Ni podatkov");
         lv_chart_refresh(chart);
         return;
@@ -452,16 +493,22 @@ void graphRefresh() {
     }
     lv_chart_refresh(chart);
 
-    // --- 9. Posodobi labele ---
-    char bufCur[24], bufMM[32];
-
-    if (lastVal > -998.0f) {
-        snprintf(bufCur, sizeof(bufCur), "%.1f %s", lastVal, graphSensorUnit(currentGraphSensor));
-    } else {
-        snprintf(bufCur, sizeof(bufCur), "--");
-    }
-    lv_label_set_text(lbl_current, bufCur);
-
+    // --- 9. Posodobi glavo: min/max ---
+    char bufMM[32];
     snprintf(bufMM, sizeof(bufMM), "%.1f / %.1f", vMin, vMax);
     lv_label_set_text(lbl_minmax, bufMM);
+
+    // --- 10. Posodobi oznake osi ---
+    // Y osi: min, mid, max (zaokroženi)
+    char bufY[12];
+    float yMidVal = (yMin + yMax) / 2.0f;
+    snprintf(bufY, sizeof(bufY), "%.0f", yMax);    lv_label_set_text(lbl_ymax, bufY);
+    snprintf(bufY, sizeof(bufY), "%.0f", yMidVal); lv_label_set_text(lbl_ymid, bufY);
+    snprintf(bufY, sizeof(bufY), "%.0f", yMin);    lv_label_set_text(lbl_ymin, bufY);
+
+    // X osi: relativni čas -Nh, -N/2h, 0
+    char xbuf[8];
+    snprintf(xbuf, sizeof(xbuf), "-%dh", currentGraphHours);     lv_label_set_text(lbl_xL, xbuf);
+    snprintf(xbuf, sizeof(xbuf), "-%dh", currentGraphHours / 2); lv_label_set_text(lbl_xM, xbuf);
+    lv_label_set_text(lbl_xR, "0");
 }

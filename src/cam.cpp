@@ -5,73 +5,68 @@
 // Snapshot:          capture_handler   → en JPEG frame na /capture
 // Snemanje (AVI):    record_task       → sproži PIR, shrani na SD
 //
-// Task arhitektura:
-//   stream_task  (Core 1, pri 5): teče ves čas, blokira na frame
-//   record_task  (Core 1, pri 4): ustvari ob startMotionRecording(), self-delete ob koncu
-//
-// SPI / SD mutex:
-//   SD kartica deli SPI bus z LCD (sdMutex iz globals.h).
-//   record_task drži sdMutex samo med posameznim avi->writeFrame() klicem (~2ms).
-//   Daljši hold (avi->open/close) se izvede z mutex timeout watchdog.
-//
-// PSRAM:
-//   fb_location = CAMERA_FB_IN_PSRAM
-//   fb_count    = 2 (double buffer za smooth stream + record hkrati)
+// SPREMEMBE (2026-03-03):
+//   - CAM_RECORD_FPS_TARGET: 7 → 3 fps
+//     Posledica: ~2.3× manj podatkov, AVI_MAX_FRAMES zmanjšan na 400
+//   - buildFilename(): nov format → /recordings/20260303_143000.avi
+//     Alphabetski red = kronološki red → trivalno brisanje najstarejšega
+//     Fallback (brez NTP): /recordings/NOSYNC_12345678.avi (millis/1000)
+//   - cleanOldRecordings(): avtomatsko brisanje pred vsakim novim snemanjem
+//     Kriterij: SD < CAM_SD_FREE_MIN_MB MB prostega prostora
+//               ALI število datotek > CAM_MAX_RECORDINGS
+//     Strategija: briši najstarejše (alphabetski = kronološki) dokler ni ok
 //
 // POPRAVKI (2026-02-28):
 //   - Odstranjeni lokalni #define CAM_PIN_* (16 duplikatov config.h!)
-//     Zamenjano z config.h makroji (CAM_PWDN_PIN, CAM_XCLK_PIN ...).
 //
 // POPRAVKI (2026-03-01):
-//   - KRITIČNO: _lastMotionMs (lokalna static spremenljivka) zamenjana z
-//     lastMotionMs (globalna iz globals.h, volatile).
-//     Prej: sens.cpp je pisal v globals lastMotionMs, cam.cpp bral lokalno
-//           _lastMotionMs → kamera ni nikoli upoštevala PIR eventov iz senzorja!
-//           PIR je sicer sprožil startMotionRecording() prek sens.cpp→cam.cpp klic,
-//           ampak performMotionRecordingCheck() ni videl obnove časa iz sens.cpp.
-//           Posledica: snemanje se je ustavilo po CAM_POST_MOTION_SEC od
-//           ZAČETKA snemanja (ne od zadnjega gibanja).
-//   - LEDC kanal in timer sta zdaj iz config.h (CAM_LEDC_CHANNEL, CAM_LEDC_TIMER)
-//     namesto hardcoded magic numbers LEDC_TIMER_2, LEDC_CHANNEL_2.
-//   - OV5640_PID: zaščiten z #ifndef v config.h (varno za vse verzije esp32-camera)
+//   - KRITIČNO: _lastMotionMs zamenjana z globals lastMotionMs
+//   - LEDC kanal in timer iz config.h
+//   - OV5640_PID zaščiten z #ifndef
 //
 // POPRAVKI (2026-03-01 v2):
-//   - FIX KRITIČNO: Stack overflow v record_task!
-//     AviWriter vsebuje _index[AVI_MAX_FRAMES=900] × 16B = 14.400 B na stack-u
-//     taska z le 8.192 B → crash ob prvem snemanju.
-//     Rešitev: AviWriter se zdaj alocira na heap (new/delete) znotraj record_task.
-//     Stack record_task povečan iz 8192 na 12288 B (za sam task overhead).
+//   - KRITIČNO: AviWriter na HEAP (new/delete) — stack overflow fix
+//   - Stack record_task: 8192 → 12288 B
 
 #include "cam.h"
 #include "avi.h"
 #include "globals.h"
 #include "logging.h"
-#include "sd_card.h"
+#include "sd.h"
 #include <esp_camera.h>
 #include <esp_http_server.h>
 #include <esp_timer.h>
+#include <SD.h>
+#include <Preferences.h>
 
 // =============================================================================
-// KONFIGURACIJA (pini iz config.h, LEDC iz config.h)
+// KONFIGURACIJA
 // =============================================================================
 
-// Stream / snemanje parametri
-#define CAM_STREAM_PORT         81
-#define CAM_XCLK_FREQ_HZ        20000000
-#define CAM_FRAME_SIZE          FRAMESIZE_SVGA   // 800x600
-#define CAM_STREAM_QUALITY      12               // JPEG quality 0-63
-#define CAM_RECORD_QUALITY      10               // Malo boljša kakovost za snemanje
-#define CAM_RECORD_FPS_TARGET    7               // Target fps (SVGA ~7fps)
-#define CAM_POST_MOTION_SEC     10               // Sekund po zadnjem gibanju
-#define CAM_MAX_RECORD_SEC     120               // Absolutni max snemanja
-#define CAM_RECORD_DIR          "/recordings"    // SD mapa
-#define CAM_RECORD_FRAME_MS     (1000 / CAM_RECORD_FPS_TARGET)  // ~143ms med framei
+#define CAM_STREAM_PORT          81
+#define CAM_XCLK_FREQ_HZ         20000000
+#define CAM_FRAME_SIZE           FRAMESIZE_SVGA    // 800×600
+#define CAM_STREAM_QUALITY       12                // JPEG quality 0-63
+#define CAM_RECORD_QUALITY       10
 
-// MJPEG stream boundary
-#define STREAM_BOUNDARY         "vent_sew_stream"
-#define STREAM_CONTENT_TYPE     "multipart/x-mixed-replace;boundary=" STREAM_BOUNDARY
-#define STREAM_BOUNDARY_LINE    "\r\n--" STREAM_BOUNDARY "\r\n"
-#define STREAM_PART_HDR         "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n"
+// SPREMEMBA (2026-03-03): 7 → 3 fps
+// Pri 3fps in SVGA JPEG (~20-40KB/frame): ~1-2 MB/min, ~2-4 MB na 2-min posnetek
+#define CAM_RECORD_FPS_TARGET     3
+#define CAM_POST_MOTION_SEC      10
+#define CAM_MAX_RECORD_SEC      120
+#define CAM_RECORD_DIR           "/recordings"
+#define CAM_RECORD_FRAME_MS      (1000 / CAM_RECORD_FPS_TARGET)  // 333ms med framei
+
+// Brisanje posnetkov (2026-03-03)
+// Preveri pred vsakim novim snemanjem - briši najstarejše dokler ni ok
+#define CAM_MAX_RECORDINGS       50    // max število AVI datotek v /recordings/
+#define CAM_SD_FREE_MIN_MB      200    // min MB prostega prostora na SD
+
+// MJPEG stream
+#define STREAM_BOUNDARY          "vent_sew_stream"
+#define STREAM_CONTENT_TYPE      "multipart/x-mixed-replace;boundary=" STREAM_BOUNDARY
+#define STREAM_BOUNDARY_LINE     "\r\n--" STREAM_BOUNDARY "\r\n"
+#define STREAM_PART_HDR          "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n"
 
 // =============================================================================
 // INTERNE SPREMENLJIVKE
@@ -82,34 +77,44 @@ static httpd_handle_t    _streamServer   = NULL;
 static SemaphoreHandle_t _frameMutex     = NULL;
 static TaskHandle_t      _recordTask     = NULL;
 
-// Snemanje state
-static volatile bool     _recordActive   = false;
-// FIX (2026-03-01): _lastMotionMs ODSTRANJENA - namesto nje se bere globals lastMotionMs
-// Razlog: sens.cpp piše lastMotionMs ob PIR zaznavi, ta modul mora brati isto spremenljivko!
-// static volatile unsigned long _lastMotionMs = 0;  // ODSTRANJENO!
+static volatile bool          _recordActive   = false;
 static volatile unsigned long _recordStartMs  = 0;
 
-// Statistike
 static volatile uint32_t _totalRecordings = 0;
 static volatile uint32_t _lastFileSize    = 0;
 static char              _lastFilename[40] = "";
 
-// Stream fps tracking
 static volatile float    _streamFps     = 0.0f;
 static volatile bool     _clientActive  = false;
 
 // =============================================================================
-// POMOZNE FUNKCIJE
+// buildFilename()
+//
+// SPREMEMBA (2026-03-03): nov format s timestampom
+//
+// Format (ko je NTP sinhroniziran):
+//   /recordings/20260303_143000.avi
+//   Datoteke se urejajo alphabetsko = kronološko → enostavno brisanje najstarejše
+//
+// Format (brez NTP sinhronizacije):
+//   /recordings/NOSYNC_12345678.avi
+//   Uporabi millis()/1000 kot surrogat za čas — ni kronološko zanesljivo,
+//   ampak zagotovi unikatno ime. NOSYNC_ prefix loči od sinhroniziranih datotek.
+//
+// Dolžina:  max 48 znakov (bufLen v record_task)
 // =============================================================================
 
 static void buildFilename(char* buf, size_t bufLen) {
     if (timeSynced) {
+        // Format: YYYYmmdd_HHMMSS.avi
+        // ezTime myTZ.dateTime() vrne string, ki ga formatiramo direktno
         snprintf(buf, bufLen, "%s/%s.avi",
                  CAM_RECORD_DIR,
-                 myTZ.dateTime("Y-m-d_H-i-s").c_str());
+                 myTZ.dateTime("Ymd_His").c_str());
     } else {
-        snprintf(buf, bufLen, "%s/rec_%lu.avi",
-                 CAM_RECORD_DIR, millis() / 1000);
+        // Brez NTP — millis() / 1000 kot unikatni identifikator
+        snprintf(buf, bufLen, "%s/NOSYNC_%08lu.avi",
+                 CAM_RECORD_DIR, millis() / 1000UL);
     }
 }
 
@@ -125,25 +130,127 @@ static bool ensureRecordingDir() {
 }
 
 // =============================================================================
+// cleanOldRecordings()
+//
+// NOVO (2026-03-03): briši najstarejše posnetke pred novim snemanjem
+//
+// Logika:
+//   1. Preštej datoteke *.avi v CAM_RECORD_DIR
+//   2. Izračunaj prosti prostor na SD
+//   3. Če je preveč datotek ALI premalo prostora:
+//      - Zberi seznam imen datotek v alphabetskem vrstnem redu
+//        (alphabetski = kronološki za format YYYYmmdd_HHMMSS.avi)
+//      - Briši od najstarejše naprej, dokler pogoji niso izpolnjeni
+//
+// Klic: znotraj record_task, pod sdMutex, PRED avi->open()
+//
+// Opomba o SD.totalBytes() / SD.usedBytes():
+//   ESP32 Arduino SD knjižnica vrača te vrednosti v bajtih.
+//   Za MB: delimo z (1024*1024).
+//   SD.totalBytes() in SD.usedBytes() sta na voljo od esp32 Arduino >= 2.0.
+// =============================================================================
+
+static void cleanOldRecordings() {
+    // Zberemo seznam AVI datotek
+    File dir = SD.open(CAM_RECORD_DIR);
+    if (!dir || !dir.isDirectory()) {
+        LOG_WARN("CAM", "cleanOldRecordings: cannot open %s", CAM_RECORD_DIR);
+        return;
+    }
+
+    // Zberemo imena v statičen array (max 100 datotek v buffer)
+    // Heap alokacija ni varna v ISR kontekstu, tu smo v tasku → OK z new[]
+    static const int MAX_LIST = 100;
+    char** names = new char*[MAX_LIST];
+    if (!names) {
+        LOG_ERROR("CAM", "cleanOldRecordings: alloc failed");
+        dir.close();
+        return;
+    }
+    int count = 0;
+
+    File f = dir.openNextFile();
+    while (f && count < MAX_LIST) {
+        const char* fname = f.name();
+        // Upoštevamo samo .avi datoteke (ne mape, ne .log itd.)
+        size_t flen = strlen(fname);
+        if (!f.isDirectory() && flen > 4 &&
+            strcasecmp(fname + flen - 4, ".avi") == 0)
+        {
+            names[count] = new char[flen + 1];
+            if (names[count]) {
+                strcpy(names[count], fname);
+                count++;
+            }
+        }
+        f.close();
+        f = dir.openNextFile();
+    }
+    if (f) f.close();
+    dir.close();
+
+    if (count == 0) {
+        delete[] names;
+        return;
+    }
+
+    // Alphabetsko sortiranje (insertion sort — majhen N, enostaven)
+    for (int i = 1; i < count; i++) {
+        char* key = names[i];
+        int j = i - 1;
+        while (j >= 0 && strcmp(names[j], key) > 0) {
+            names[j + 1] = names[j];
+            j--;
+        }
+        names[j + 1] = key;
+    }
+
+    LOG_INFO("CAM", "cleanOldRecordings: %d AVI files found", count);
+
+    // Preveri pogoje in briši od najstarejšega
+    int deleted = 0;
+    for (int i = 0; i < count; i++) {
+        // Preveri pogoje (po vsakem brisanju)
+        uint64_t freeBytes = SD.totalBytes() - SD.usedBytes();
+        uint32_t freeMB    = (uint32_t)(freeBytes / (1024ULL * 1024ULL));
+        int      remaining = count - deleted;
+
+        bool tooMany  = (remaining > CAM_MAX_RECORDINGS);
+        bool tooFull  = (freeMB < CAM_SD_FREE_MIN_MB);
+
+        if (!tooMany && !tooFull) break;  // pogoji izpolnjeni
+
+        // Sestavi polno pot
+        char fullPath[80];
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", CAM_RECORD_DIR, names[i]);
+
+        if (SD.remove(fullPath)) {
+            LOG_INFO("CAM", "Deleted old recording: %s (free=%uMB, count=%d)",
+                     names[i], freeMB, remaining);
+            deleted++;
+        } else {
+            LOG_WARN("CAM", "Failed to delete: %s", fullPath);
+        }
+    }
+
+    if (deleted > 0) {
+        LOG_INFO("CAM", "cleanOldRecordings: deleted %d file(s)", deleted);
+    }
+
+    // Sprosti pomnilnik
+    for (int i = 0; i < count; i++) {
+        delete[] names[i];
+    }
+    delete[] names;
+}
+
+// =============================================================================
 // RECORD TASK
-//
-// FIX (2026-03-01 v2): AviWriter alociran na HEAP namesto na stack!
-//
-// Razlog: AviWriter._index[AVI_MAX_FRAMES] = 900 × 16B = 14.400B.
-//   Ko je AviWriter lokalna spremenljivka v record_task, je 14.400B na
-//   task stack-u. record_task ima stack 8.192B → takoj ob kreaciji AviWriter
-//   nastopi stack overflow → CPU exception → reboot.
-//
-// Rešitev: new AviWriter() alocira objekt na PSRAM/heap (ESP32-S3R8 ima 8MB PSRAM).
-//   - Task stack zmanjšamo na 12.288B (dovolj za task overhead + lokalne spremenljivke)
-//   - delete avi se izvede na koncu ali ob vsaki poti napake
-//   - Null check po new zagotovi varno ravnanje ob OOM
 // =============================================================================
 
 static void record_task(void* arg) {
     LOG_INFO("CAM", "Record task started");
 
-    // FIX: AviWriter NA HEAP - ne na stack (14.400B bi prekoračilo 8192B stack)!
     AviWriter* avi = new AviWriter();
     if (!avi) {
         LOG_ERROR("CAM", "record_task: AviWriter heap alloc failed (OOM)!");
@@ -161,6 +268,9 @@ static void record_task(void* arg) {
     }
 
     ensureRecordingDir();
+
+    // NOVO (2026-03-03): počisti stare posnetke PRED odprtjem nove datoteke
+    cleanOldRecordings();
 
     char filename[48];
     buildFilename(filename, sizeof(filename));
@@ -185,7 +295,7 @@ static void record_task(void* arg) {
     strncpy(sensorData.lastRecordingFile, _lastFilename, sizeof(sensorData.lastRecordingFile) - 1);
     sensorData.lastRecordingFile[sizeof(sensorData.lastRecordingFile) - 1] = '\0';
 
-    LOG_INFO("CAM", "Recording: %s", filename);
+    LOG_INFO("CAM", "Recording: %s @ %dfps", filename, CAM_RECORD_FPS_TARGET);
 
     unsigned long frameMs     = CAM_RECORD_FRAME_MS;
     unsigned long lastFrameMs = millis();
@@ -251,7 +361,6 @@ static void record_task(void* arg) {
     LOG_INFO("CAM", "Recording done: %s, %u frames, %u B, total=%u",
              filename, avi->frameCount(), _lastFileSize, _totalRecordings);
 
-    // FIX: sprostimo heap alokacijo
     delete avi;
     avi = NULL;
 
@@ -371,34 +480,29 @@ static esp_err_t capture_handler(httpd_req_t* req) {
 // =============================================================================
 
 bool initCamera() {
-    LOG_INFO("CAM", "Initializing camera (OV2640/OV5640, SVGA)");
+    LOG_INFO("CAM", "Initializing camera (OV2640/OV5640, SVGA, %dfps record)", CAM_RECORD_FPS_TARGET);
 
     _frameMutex = xSemaphoreCreateMutex();
 
-    // Pini iz config.h (CAM_*_PIN) - brez lokalnih duplikatov!
-    // LEDC kanal/timer iz config.h (CAM_LEDC_CHANNEL, CAM_LEDC_TIMER) - brez magic numbers!
     camera_config_t cfg = {};
-    cfg.pin_pwdn     = CAM_PWDN_PIN;    // IO17
-    cfg.pin_reset    = -1;              // Ni reset pina
-    cfg.pin_xclk     = CAM_XCLK_PIN;   // IO8
-    cfg.pin_sccb_sda = CAM_SDA_PIN;    // IO21
-    cfg.pin_sccb_scl = CAM_SCL_PIN;    // IO16
-    cfg.pin_d7       = CAM_D7_PIN;     // IO2
-    cfg.pin_d6       = CAM_D6_PIN;     // IO7
-    cfg.pin_d5       = CAM_D5_PIN;     // IO10
-    cfg.pin_d4       = CAM_D4_PIN;     // IO14
-    cfg.pin_d3       = CAM_D3_PIN;     // IO11
-    cfg.pin_d2       = CAM_D2_PIN;     // IO15
-    cfg.pin_d1       = CAM_D1_PIN;     // IO13
-    cfg.pin_d0       = CAM_D0_PIN;     // IO12
-    cfg.pin_vsync    = CAM_VSYNC_PIN;  // IO6
-    cfg.pin_href     = CAM_HREF_PIN;   // IO4
-    cfg.pin_pclk     = CAM_PCLK_PIN;  // IO9
+    cfg.pin_pwdn     = CAM_PWDN_PIN;
+    cfg.pin_reset    = -1;
+    cfg.pin_xclk     = CAM_XCLK_PIN;
+    cfg.pin_sccb_sda = CAM_SDA_PIN;
+    cfg.pin_sccb_scl = CAM_SCL_PIN;
+    cfg.pin_d7       = CAM_D7_PIN;
+    cfg.pin_d6       = CAM_D6_PIN;
+    cfg.pin_d5       = CAM_D5_PIN;
+    cfg.pin_d4       = CAM_D4_PIN;
+    cfg.pin_d3       = CAM_D3_PIN;
+    cfg.pin_d2       = CAM_D2_PIN;
+    cfg.pin_d1       = CAM_D1_PIN;
+    cfg.pin_d0       = CAM_D0_PIN;
+    cfg.pin_vsync    = CAM_VSYNC_PIN;
+    cfg.pin_href     = CAM_HREF_PIN;
+    cfg.pin_pclk     = CAM_PCLK_PIN;
 
     cfg.xclk_freq_hz = CAM_XCLK_FREQ_HZ;
-
-    // FIX (2026-03-01): LEDC iz config.h namesto hardcoded LEDC_TIMER_2/LEDC_CHANNEL_2
-    // CAM_LEDC_TIMER = 2, CAM_LEDC_CHANNEL = 2 (različno od LEDC_BL_CHANNEL=0!)
     cfg.ledc_timer   = (ledc_timer_t)  CAM_LEDC_TIMER;
     cfg.ledc_channel = (ledc_channel_t)CAM_LEDC_CHANNEL;
 
@@ -427,7 +531,6 @@ bool initCamera() {
             s->set_gain_ctrl(s, 1);
             s->set_exposure_ctrl(s, 1);
         } else if (s->id.PID == OV5640_PID) {
-            // OV5640_PID je zaščiten z #ifndef v config.h - varno za vse verzije esp32-camera
             s->set_whitebal(s, 1);
             s->set_gain_ctrl(s, 1);
             s->set_exposure_ctrl(s, 1);
@@ -471,7 +574,7 @@ bool initCamera() {
     httpd_register_uri_handler(_streamServer, &capture_uri);
 
     LOG_INFO("CAM", "Stream server on port %d: /stream, /capture", CAM_STREAM_PORT);
-    LOG_INFO("CAM", "Init OK: SVGA 800x600 JPEG, fb_count=2, PSRAM");
+    LOG_INFO("CAM", "Init OK: SVGA 800x600 JPEG, fb_count=2, PSRAM, record=%dfps", CAM_RECORD_FPS_TARGET);
     return true;
 }
 
@@ -493,16 +596,11 @@ void deinitCamera() {
 
 // =============================================================================
 // startMotionRecording()
-// FIX (2026-03-01): ob vsakem klicu se posodobi globals lastMotionMs
-//   (namesto lokalne _lastMotionMs ki jo sens.cpp ni mogel posodabljati)
 // =============================================================================
 
 void startMotionRecording() {
     if (!_camReady) return;
 
-    // FIX: posodobi globalno lastMotionMs, ki jo record_task bere v
-    // performMotionRecordingCheck(). sens.cpp posodablja lastMotionMs ob PIR,
-    // ta klic jo posodobi ob ročnem zagonu snemanja.
     lastMotionMs = millis();
 
     if (_recordActive) {
@@ -518,13 +616,10 @@ void startMotionRecording() {
     _recordActive  = true;
     _recordStartMs = millis();
 
-    // FIX (2026-03-01 v2): stack povečan na 12288B
-    // AviWriter je zdaj na heap (new/delete v record_task), ne na stack.
-    // 12288B zadošča za task overhead, lokalne spremenljivke, frame processing.
     BaseType_t rc = xTaskCreatePinnedToCore(
         record_task,
         "record_task",
-        12288,          // FIX: 8192 → 12288 (AviWriter je na heap, ne tukaj)
+        12288,
         NULL,
         4,
         &_recordTask,
@@ -542,8 +637,6 @@ void startMotionRecording() {
 
 // =============================================================================
 // performMotionRecordingCheck()
-// FIX (2026-03-01): bere globals lastMotionMs (volatile) namesto _lastMotionMs
-//   lastMotionMs posodablja sens.cpp ob vsakem PIR eventu → pravilno podaljševanje
 // =============================================================================
 
 void performMotionRecordingCheck() {
@@ -551,15 +644,12 @@ void performMotionRecordingCheck() {
 
     unsigned long now = millis();
 
-    // Absolutni maksimum snemanja
     if (now - _recordStartMs >= (CAM_MAX_RECORD_SEC * 1000UL)) {
         LOG_INFO("CAM", "Recording: max duration (%ds) reached, stopping", CAM_MAX_RECORD_SEC);
         _recordActive = false;
         return;
     }
 
-    // FIX: lastMotionMs (globals, volatile) - sens.cpp ga posodablja ob PIR
-    // Prej: _lastMotionMs (lokalna) - sens.cpp je NI posodabljal → napačno ustavitev
     if (now - (unsigned long)lastMotionMs >= (CAM_POST_MOTION_SEC * 1000UL)) {
         LOG_INFO("CAM", "Recording: no motion for %ds, stopping", CAM_POST_MOTION_SEC);
         _recordActive = false;
