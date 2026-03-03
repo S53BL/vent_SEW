@@ -486,10 +486,10 @@ void graphRefresh() {
                        (lv_coord_t)(yMin * 10.0f),
                        (lv_coord_t)(yMax * 10.0f));
 
-    // --- 8. Zapiši točke v LVGL (direkten dostop — lv_chart_set_value_by_id ne obstaja v tej verziji) ---
+    // --- 8. Zapiši točke v LVGL — obrni vrstni red: najnovejše desno, najstarejše levo ---
     lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
     for (int i = 0; i < validPts; i++) {
-        ser->y_points[i] = vals[i];
+        ser->y_points[validPts - 1 - i] = vals[i];
     }
     lv_chart_refresh(chart);
 
