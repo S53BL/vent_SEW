@@ -17,6 +17,11 @@
 //   - readSensors() postavi na true po uspešnem branju SHT41
 //   - main.cpp prebere in postavi nazaj na false po graphAddPoint()
 //
+// runBsecLoop():
+//   - Klic iz main loop() pri vsakem prehodu
+//   - BSEC2 SAMPLE_RATE_LP zahteva run() vsaj vsake 3s za sproži callback
+//   - run() je neblokirajoča: če ni novih podatkov, se takoj vrne
+//
 // Baterija:
 //   - ADC IO5, delilnik 200K/100K → faktor ×3
 //   - readBattery() bere in posodobi sensorData.bat + sensorData.batPct
@@ -33,6 +38,7 @@ bool initSens();    // Alias za main.cpp
 // Branje (klic iz main loop)
 void readSensors();
 void runSens();     // Alias za main.cpp
+void runBsecLoop(); // Klic iz main loop() - BSEC2 LP polling (vsaj vsake 3s)
 
 // I2C bus recovery
 void initI2CBus();

@@ -121,6 +121,7 @@ void initDisplay() {
 
     // Senzorji: 2 stolpca, 3 vrstice (y = 64..124)
     // Levo: T, P, Lux   Desno: RH, IAQ, PIR
+    // Izboljšave: enakomerni razmaki (20px) in desna poravnava vrednosti
 
     auto makeLbl = [&](lv_obj_t* parent, int x, int y, const lv_font_t* font, lv_color_t col, const char* txt) -> lv_obj_t* {
         lv_obj_t* l = lv_label_create(parent);
@@ -131,27 +132,45 @@ void initDisplay() {
         return l;
     };
 
-    const lv_font_t* fSmall = &lv_font_montserrat_16; // povečano iz 14 na 16
+    auto makeValLbl = [&](lv_obj_t* parent, int x, int y, const lv_font_t* font, lv_color_t col, const char* txt) -> lv_obj_t* {
+        lv_obj_t* l = lv_label_create(parent);
+        lv_obj_set_pos(l, x, y);
+        lv_obj_set_style_text_font(l, font, 0);
+        lv_obj_set_style_text_color(l, col, 0);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0); // desna poravnava
+        lv_label_set_text(l, txt);
+        return l;
+    };
+
+    const lv_font_t* fSmall = &lv_font_montserrat_16;
     const lv_font_t* fVal   = &lv_font_montserrat_16;
-    lv_color_t cLbl = lv_color_hex(COL_TEXT_SECONDARY); // uporabi svetlo sivo iz colours.h
-
+    lv_color_t cLbl = lv_color_hex(COL_TEXT_SECONDARY);
+    
+    // Levi stolpec: oznake na x=8, vrednosti desno poravnane (premaknjene za 20px levo)
     makeLbl(top_panel, 8, 64, fSmall, cLbl, "T");
-    lbl_temp = makeLbl(top_panel, 22, 62, fVal, lv_color_hex(0xFF8080), "--.-C");
-
-    makeLbl(top_panel, SCR_W/2, 64, fSmall, cLbl, "RH");
-    lbl_hum = makeLbl(top_panel, SCR_W/2+20, 62, fVal, lv_color_hex(0x4DA6FF), "--%");
+    lbl_temp = makeValLbl(top_panel, 40, 62, fVal, lv_color_hex(0xFF8080), "--.- °C");
+    lv_obj_set_width(lbl_temp, 70); // povečano za presledek in ° znak
 
     makeLbl(top_panel, 8, 86, fSmall, cLbl, "P");
-    lbl_press = makeLbl(top_panel, 22, 84, fVal, lv_color_hex(0xA8D8A8), "---- hPa");
-
-    makeLbl(top_panel, SCR_W/2, 86, fSmall, cLbl, "IAQ");
-    lbl_iaq = makeLbl(top_panel, SCR_W/2+32, 84, fVal, lv_color_hex(0xFFD700), "---");
+    lbl_press = makeValLbl(top_panel, 40, 84, fVal, lv_color_hex(0xA8D8A8), "---- hPa");
+    lv_obj_set_width(lbl_press, 70); // povečano za "hPa" z presledkom
 
     makeLbl(top_panel, 8, 108, fSmall, cLbl, "Lux");
-    lbl_lux = makeLbl(top_panel, 35, 106, fVal, lv_color_hex(0xFFF176), "----");
+    lbl_lux = makeValLbl(top_panel, 40, 106, fVal, lv_color_hex(0xFFF176), "----");
+    lv_obj_set_width(lbl_lux, 70); // enakomerna širina
+
+    // Desni stolpec: oznake na x=120, vrednosti desno poravnane (premaknjene za 20px levo)
+    makeLbl(top_panel, SCR_W/2, 64, fSmall, cLbl, "RH");
+    lbl_hum = makeValLbl(top_panel, 152, 62, fVal, lv_color_hex(0x4DA6FF), "-- %");
+    lv_obj_set_width(lbl_hum, 60); // povečano za presledek
+
+    makeLbl(top_panel, SCR_W/2, 86, fSmall, cLbl, "IAQ");
+    lbl_iaq = makeValLbl(top_panel, 152, 84, fVal, lv_color_hex(0xFFD700), "---");
+    lv_obj_set_width(lbl_iaq, 60); // dovolj za 3-mestno številko
 
     makeLbl(top_panel, SCR_W/2, 108, fSmall, cLbl, "PIR");
-    lbl_pir = makeLbl(top_panel, SCR_W/2+30, 106, fVal, lv_color_hex(COL_TEXT_SECONDARY), LV_SYMBOL_BELL);
+    lbl_pir = makeValLbl(top_panel, 152, 106, fVal, lv_color_hex(COL_TEXT_SECONDARY), LV_SYMBOL_BELL);
+    lv_obj_set_width(lbl_pir, 60); // dovolj za simbol
 
     // SPODNJI DEL (graf)
     lv_obj_t* bot_panel = lv_obj_create(main_screen);
@@ -403,19 +422,19 @@ void updateUI() {
 
     // temp: float, veljavno če > ERR_FLOAT
     if (sd.temp > ERR_FLOAT) {
-        snprintf(buf, sizeof(buf), "%.1f\xC2\xB0\x43", sd.temp);
+        snprintf(buf, sizeof(buf), "%.1f \xC2\xB0\x43", sd.temp); // dodan presledek
         lv_label_set_text(lbl_temp, buf);
     }
 
     // FIX: bilo sd.humidity - pravilno je sd.hum
     if (sd.hum > ERR_FLOAT) {
-        snprintf(buf, sizeof(buf), "%.0f%%", sd.hum);
+        snprintf(buf, sizeof(buf), "%.0f %%", sd.hum); // dodan presledek
         lv_label_set_text(lbl_hum, buf);
     }
 
     // press: float
     if (sd.press > ERR_FLOAT) {
-        snprintf(buf, sizeof(buf), "%.0f hPa", sd.press);
+        snprintf(buf, sizeof(buf), "%.0f hPa", sd.press); // že ima presledek
         lv_label_set_text(lbl_press, buf);
     }
 

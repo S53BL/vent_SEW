@@ -242,7 +242,7 @@ static void bsecDataCallback(const bme68xData data,
                 sensorData.breathVOC = o.signal;
                 break;
             case BSEC_OUTPUT_RAW_PRESSURE:
-                sensorData.press = o.signal / 100.0f + settings.pressOffset;
+                sensorData.press = o.signal + settings.pressOffset;
                 break;
             case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
                 // Opcijsko: kompenzirana temp iz BME (za cross-check s SHT41)
@@ -621,4 +621,38 @@ void resetSensors() {
     pirLastState = false;
     newSensorData = false;
     initSensors();
+}
+
+// ============================================================
+// BSEC2 LOOP POLLING - klic iz main loop() pri vsakem prehodu
+// ============================================================
+//
+// Zakaj je ta funkcija potrebna:
+//   BSEC2 SAMPLE_RATE_LP vzorči vsakih ~3s. Da callback (bsecDataCallback)
+//   sploh dobi priložnost za sprožitev, mora iaqSensor.run() biti klican
+//   pogosto - vsaj vsakih 3s. runSens() se kliče vsakih 30s kar je
+//   prepočasi. Ta funkcija se kliče pri vsakem loop() prehodu (~10ms).
+//   run() je neblokirajoča: takoj vrne false če ni čas za meritev.
+//
+void runBsecLoop() {
+    if (!bme680Present) return;
+
+    if (!iaqSensor.run()) {
+        // run() vrne false: ali ni novih podatkov (normalno za LP mode)
+        // ali pa je prišlo do napake
+        if (iaqSensor.status < BSEC_OK || iaqSensor.sensor.status < BME68X_OK) {
+            bme680ErrorCount++;
+            sensorData.err |= ERR_BME680;
+            LOG_WARN("BSEC", "Loop error (bsec=%d bme68x=%d count=%d/%d)",
+                     iaqSensor.status, iaqSensor.sensor.status,
+                     bme680ErrorCount, SENSOR_RETRY_COUNT);
+            if (bme680ErrorCount >= SENSOR_RETRY_COUNT) {
+                bme680Present = false;
+                bme680ErrorCount = 0;
+                LOG_WARN("BSEC", "BME680 marked absent (loop errors)");
+            }
+        }
+        // else: run()==false brez napake = normalno, čaka na naslednji LP interval
+    }
+    // else: run()==true → bsecDataCallback je bil poklican, sensorData je posodobljen
 }

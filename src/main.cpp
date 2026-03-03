@@ -286,5 +286,9 @@ void loop() {
         if (sdPresent) flushBufferToSD();
     }
 
+    // BSEC2 mora biti klican pogosto (vsaj vsake ~3s za LP mode)
+    // run() je neblokirajoča - varno klicati pri vsakem loop() prehodu
+    runBsecLoop();
+
     delay(10);
 }
