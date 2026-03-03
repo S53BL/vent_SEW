@@ -7,7 +7,10 @@
 //
 // Touch:
 //   tap zgornji del -> detail screen (senzorji + OpenMeteo + sistem)
-//   tap spodnji del -> naslednji senzor (cycle sensor)
+//   spodnji del (graf):
+//     swipe levo/desno -> menja senzor
+//     kratek dotik     -> zoom in (krajše časovno okno)
+//     dolgi dotik      -> zoom out (daljše časovno okno)
 //
 #pragma once
 #include <Arduino.h>

@@ -43,7 +43,6 @@ static lv_obj_t* lbl_pir     = nullptr;
 static lv_obj_t* lbl_weather = nullptr;
 
 static void top_touch_cb(lv_event_t* e);
-static void graph_touch_cb(lv_event_t* e);
 static void detail_touch_cb(lv_event_t* e);
 static void detail_timer_cb(lv_timer_t* t);
 
@@ -181,8 +180,6 @@ void initDisplay() {
     lv_obj_set_style_radius(bot_panel, 0, 0);
     lv_obj_set_style_pad_all(bot_panel, 0, 0);
     lv_obj_clear_flag(bot_panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(bot_panel, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(bot_panel, graph_touch_cb, LV_EVENT_CLICKED, NULL);
 
     initGraph(bot_panel, 2, 2, SCR_W - 4, BOT_H - 4);
 
@@ -191,7 +188,6 @@ void initDisplay() {
 }
 
 static void top_touch_cb(lv_event_t* e)   { (void)e; showDetailScreen(); }
-static void graph_touch_cb(lv_event_t* e) { (void)e; currentGraphSensor = (currentGraphSensor + 1) % GRAPH_COUNT; graphRefresh(); }
 static void detail_touch_cb(lv_event_t* e){ (void)e; hideDetailScreen(); }
 static void detail_timer_cb(lv_timer_t* t){ (void)t; hideDetailScreen(); }
 
@@ -455,6 +451,5 @@ void updateUI() {
     lv_obj_set_style_text_color(lbl_pir,
         sd.motion ? lv_color_hex(0xFF6644) : lv_color_hex(COL_TEXT_SECONDARY), 0);
 
-    graphRefresh();
     lv_timer_handler();
 }
