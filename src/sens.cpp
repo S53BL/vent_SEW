@@ -242,14 +242,15 @@ static void bsecDataCallback(const bme68xData data,
             case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
                 sensorData.breathVOC = o.signal;
                 break;
-            case BSEC_OUTPUT_RAW_PRESSURE: {
-                float hPa = o.signal / 100.0f;   // FIX: BSEC vrača Pa, ne hPa!
-                if (hPa >= PRESS_MIN && hPa <= PRESS_MAX)
-                    sensorData.press = hPa + settings.pressOffset;
+            case BSEC_OUTPUT_RAW_PRESSURE:
+                // BSEC2 vrača tlak DIREKTNO v hPa (ne Pa!)
+                // 53f953f referenca: direktna dodelitev brez delitve
+                if (o.signal >= PRESS_MIN && o.signal <= PRESS_MAX)
+                    sensorData.press = o.signal + settings.pressOffset;
                 else
-                    LOG_WARN("BSEC", "Invalid pressure: %.1f Pa (%.2f hPa)", o.signal, hPa);
+                    LOG_WARN("BSEC", "Invalid pressure: %.2f hPa (expect %.0f-%.0f hPa)",
+                             o.signal, (float)PRESS_MIN, (float)PRESS_MAX);
                 break;
-            }
             case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
                 // Opcijsko: kompenzirana temp iz BME (za cross-check s SHT41)
                 break;
@@ -521,7 +522,7 @@ void readBattery() {
     sensorData.bat    = vbat;
     sensorData.batPct = (uint8_t)constrain(
         (int)((vbat - 3.0f) / 1.2f * 100.0f), 0, 100);
-    LOG_DEBUG("BAT", "%.3fV %u%%", vbat, sensorData.batPct);
+    // Baterija dostopna na /data webu — log ni potreben
 }
 
 // ============================================================
