@@ -461,6 +461,9 @@ void readPIR() {
 
     if (pirCurrent && !pirLastState) {
         // RISING EDGE - novo zaznano gibanje
+        // NAJPREJ: shrani predhodni completedMotionTime → previousMotionTime
+        // tako bo oseba, ki se priblíža, videla čas PREDHODNE zaznave (ne "NOW")
+        previousMotionTime = completedMotionTime;
         sensorData.motion = true;
         sensorData.motionCount++;
         lastMotionMs = millis();

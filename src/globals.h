@@ -225,6 +225,13 @@ extern volatile unsigned long lastMotionMs;
 // Vrednost 0 = ni še nobene zaznave od zagona
 extern volatile time_t completedMotionTime;
 
+// --- PIR: čas PREDHODNEGA zaključenega gibanja (za prikaz na zaslonu) ---
+// previousMotionTime: shrani se ob vsakem RISING EDGE (nova zaznava) kot
+//   kopija completedMotionTime PREDEN se ta posodobi z novim gibanjem.
+// Namen: oseba, ki se priblíža (RISING EDGE), vidi čas PREDHODNE zaznave,
+//   ne "NOW". Vrednost 0 = ni še predhodne zaznave.
+extern volatile time_t previousMotionTime;
+
 // Nova timing spremenljivka: hitra zanka (1s — BSEC2 + PIR + BAT)
 // Ob zagonu se postavi na 0 da se prva iteracija sproži takoj.
 extern unsigned long lastFastTickMs;

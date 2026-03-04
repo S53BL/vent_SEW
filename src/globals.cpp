@@ -62,6 +62,11 @@ volatile unsigned long lastMotionMs     = 0;
 // 0 = ni še nobene zaznave od zagona
 volatile time_t completedMotionTime     = 0;
 
+// PIR: čas PREDHODNEGA zaključenega gibanja (za prikaz na zaslonu)
+// Shrani se ob RISING EDGE (nova zaznava) kot kopija completedMotionTime.
+// 0 = ni še predhodne zaznave
+volatile time_t previousMotionTime      = 0;
+
 // Nova timing spremenljivka: hitra zanka (1s — BSEC2 + PIR + BAT)
 unsigned long lastFastTickMs       = 0;
 
@@ -216,6 +221,8 @@ void initGlobals() {
     lastWifiCheckMs      = 0;
     lastNtpSyncMs        = 0;
     lastMotionMs         = 0;
+    completedMotionTime  = 0;
+    previousMotionTime   = 0;
     lastTouchMs          = 0;
     lastConnectionFailMs = 0;
     retryAttempted       = false;

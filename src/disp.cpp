@@ -448,31 +448,52 @@ void updateUI() {
         lv_label_set_text(lbl_lux, buf);
     }
 
-    // PIR indikator — 4 stanja (motion_update.md §2.2)
-    if (sd.motion) {
-        // PIR aktiven (HIGH) — gibanje zdaj
-        lv_label_set_text(lbl_pir, "NOW");
-        lv_obj_set_style_text_color(lbl_pir, lv_color_hex(0xFF6644), 0);
-    } else if (completedMotionTime > 0) {
-        // Zaključeno gibanje — pokaži čas FALLING EDGE
-        time_t pir_now = time(nullptr);
-        struct tm* pir_ti = localtime((time_t*)&completedMotionTime);
-        char pirBuf[16];
-        long diff = (long)(pir_now - (time_t)completedMotionTime);
-        if (diff < 86400L) {
-            strftime(pirBuf, sizeof(pirBuf), "%H:%M", pir_ti);
-        } else {
-            strftime(pirBuf, sizeof(pirBuf), "-%H:%M", pir_ti);
+    // PIR indikator — vedno prikaži čas PREDHODNE zaznave (ne "NOW")
+    // previousMotionTime: shranjen ob RISING EDGE (nova oseba) = čas pred-predhodne osebe
+    // Fallback: completedMotionTime (ko ni še drugega gibanja za njim)
+    // Logika:
+    //   - previousMotionTime > 0  → prikaži čas predhodne zaznave (tudi med aktivnim gibanjem)
+    //   - previousMotionTime == 0 && !sd.motion && completedMotionTime > 0
+    //                              → fallback: prikaži completedMotionTime (1. gibanje, ni še naslednjega)
+    //   - vse 0 && sd.motion      → prvo gibanje vseh časov, ni predhodnega → zvonec
+    //   - vse 0                   → ni še nobene zaznave od zagona → "---"
+    {
+        time_t showTime = 0;
+        if (previousMotionTime > 0) {
+            showTime = (time_t)previousMotionTime;
+        } else if (!sd.motion && completedMotionTime > 0) {
+            showTime = (time_t)completedMotionTime;
         }
-        lv_label_set_text(lbl_pir, pirBuf);
-        lv_color_t col = (diff < 3600L)
-            ? lv_color_hex(0xFFD700)   // < 1h: rumena
-            : lv_color_hex(0x666666);  // > 1h: siva
-        lv_obj_set_style_text_color(lbl_pir, col, 0);
-    } else {
-        // Ni še nobene zaznave od zagona
-        lv_label_set_text(lbl_pir, "---");
-        lv_obj_set_style_text_color(lbl_pir, lv_color_hex(0x333333), 0);
+
+        if (showTime > 0) {
+            // Prikaži čas predhodne zaznave
+            time_t pir_now = time(nullptr);
+            time_t showTimeCopy = showTime;
+            struct tm* pir_ti = localtime(&showTimeCopy);
+            char pirBuf[16];
+            long diff = (long)(pir_now - showTime);
+            if (diff < 86400L) {
+                strftime(pirBuf, sizeof(pirBuf), "%H:%M", pir_ti);
+            } else {
+                strftime(pirBuf, sizeof(pirBuf), "-%H:%M", pir_ti);
+            }
+            lv_label_set_text(lbl_pir, pirBuf);
+            // Barva: rdeča = gibanje aktivno zdaj (nekdo je pri enoti)
+            //        rumena = < 1h nazaj
+            //        siva   = > 1h nazaj
+            lv_color_t col = sd.motion       ? lv_color_hex(0xFF6644) :
+                             (diff < 3600L)  ? lv_color_hex(0xFFD700) :
+                                               lv_color_hex(0x666666);
+            lv_obj_set_style_text_color(lbl_pir, col, 0);
+        } else if (sd.motion) {
+            // Prvo gibanje vseh časov (ni predhodnega) — pokaži zvonec
+            lv_label_set_text(lbl_pir, LV_SYMBOL_BELL);
+            lv_obj_set_style_text_color(lbl_pir, lv_color_hex(0xFF6644), 0);
+        } else {
+            // Ni še nobene zaznave od zagona
+            lv_label_set_text(lbl_pir, "---");
+            lv_obj_set_style_text_color(lbl_pir, lv_color_hex(0x333333), 0);
+        }
     }
 
     lv_timer_handler();
