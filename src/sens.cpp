@@ -262,11 +262,11 @@ static void bsecDataCallback(const bme68xData data,
         }
     }
 
-    LOG_INFO("BSEC", "P=%.1fhPa IAQ=%u(acc=%d) sIAQ=%u eCO2=%.0f bVOC=%.2f",
-             sensorData.press,
-             sensorData.iaq, sensorData.iaqAccuracy,
-             sensorData.staticIaq,
-             sensorData.eCO2, sensorData.breathVOC);
+    // LOG_INFO("BSEC", "P=%.1fhPa IAQ=%u(acc=%d) sIAQ=%u eCO2=%.0f bVOC=%.2f",
+    //          sensorData.press,
+    //          sensorData.iaq, sensorData.iaqAccuracy,
+    //          sensorData.staticIaq,
+    //          sensorData.eCO2, sensorData.breathVOC);
 
     updateBsecState();
 }
