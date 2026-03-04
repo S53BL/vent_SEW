@@ -54,13 +54,8 @@
 #define CAM_RECORD_FPS_TARGET     3
 #define CAM_POST_MOTION_SEC      10
 #define CAM_MAX_RECORD_SEC      120
-#define CAM_RECORD_DIR           "/recordings"
+#define CAM_RECORD_BASE          "/video"   // nova hierarhična struktura /video/YYYY-MM-DD/
 #define CAM_RECORD_FRAME_MS      (1000 / CAM_RECORD_FPS_TARGET)  // 333ms med framei
-
-// Brisanje posnetkov (2026-03-03)
-// Preveri pred vsakim novim snemanjem - briši najstarejše dokler ni ok
-#define CAM_MAX_RECORDINGS       50    // max število AVI datotek v /recordings/
-#define CAM_SD_FREE_MIN_MB      200    // min MB prostega prostora na SD
 
 // MJPEG stream
 #define STREAM_BOUNDARY          "vent_sew_stream"
@@ -90,158 +85,113 @@ static volatile bool     _clientActive  = false;
 // =============================================================================
 // buildFilename()
 //
-// SPREMEMBA (2026-03-03): nov format s timestampom
+// SPREMEMBA (motion_update.md §4.2): nova hierarhična struktura
 //
 // Format (ko je NTP sinhroniziran):
-//   /recordings/20260303_143000.avi
-//   Datoteke se urejajo alphabetsko = kronološko → enostavno brisanje najstarejše
+//   /video/2026-03-04/14-32-15.avi
+//   Dnevni poddirektorij → enostavno brisanje po datumu
 //
 // Format (brez NTP sinhronizacije):
-//   /recordings/NOSYNC_12345678.avi
-//   Uporabi millis()/1000 kot surrogat za čas — ni kronološko zanesljivo,
-//   ampak zagotovi unikatno ime. NOSYNC_ prefix loči od sinhroniziranih datotek.
+//   /video/unsync/rec_12345678.avi
 //
 // Dolžina:  max 48 znakov (bufLen v record_task)
 // =============================================================================
 
 static void buildFilename(char* buf, size_t bufLen) {
     if (timeSynced) {
-        // Format: YYYYmmdd_HHMMSS.avi
-        // ezTime myTZ.dateTime() vrne string, ki ga formatiramo direktno
-        snprintf(buf, bufLen, "%s/%s.avi",
-                 CAM_RECORD_DIR,
-                 myTZ.dateTime("Ymd_His").c_str());
+        // Primer: /video/2026-03-04/14-32-15.avi
+        snprintf(buf, bufLen, "%s/%s/%s.avi",
+                 CAM_RECORD_BASE,
+                 myTZ.dateTime("Y-m-d").c_str(),
+                 myTZ.dateTime("H-i-s").c_str());
     } else {
-        // Brez NTP — millis() / 1000 kot unikatni identifikator
-        snprintf(buf, bufLen, "%s/NOSYNC_%08lu.avi",
-                 CAM_RECORD_DIR, millis() / 1000UL);
+        snprintf(buf, bufLen, "%s/unsync/rec_%08lu.avi",
+                 CAM_RECORD_BASE, millis() / 1000UL);
     }
 }
 
 static bool ensureRecordingDir() {
-    if (!SD.exists(CAM_RECORD_DIR)) {
-        if (!SD.mkdir(CAM_RECORD_DIR)) {
-            LOG_ERROR("CAM", "Cannot create %s on SD", CAM_RECORD_DIR);
+    if (!SD.exists(CAM_RECORD_BASE)) {
+        if (!SD.mkdir(CAM_RECORD_BASE)) {
+            LOG_ERROR("CAM", "Cannot create %s", CAM_RECORD_BASE);
             return false;
         }
-        LOG_INFO("CAM", "Created %s on SD", CAM_RECORD_DIR);
+    }
+    if (timeSynced) {
+        // Dnevni poddir: /video/YYYY-MM-DD
+        char dayDir[36];
+        snprintf(dayDir, sizeof(dayDir), "%s/%s",
+                 CAM_RECORD_BASE, myTZ.dateTime("Y-m-d").c_str());
+        if (!SD.exists(dayDir)) {
+            if (!SD.mkdir(dayDir)) {
+                LOG_ERROR("CAM", "Cannot create day dir: %s", dayDir);
+                return false;
+            }
+            LOG_INFO("CAM", "Created day dir: %s", dayDir);
+        }
+    } else {
+        // Fallback dir za nesinhroniziran čas
+        char unsyncDir[32];
+        snprintf(unsyncDir, sizeof(unsyncDir), "%s/unsync", CAM_RECORD_BASE);
+        if (!SD.exists(unsyncDir)) SD.mkdir(unsyncDir);
     }
     return true;
 }
 
 // =============================================================================
-// cleanOldRecordings()
+// cleanOldRecordings() — JAVNA funkcija (klic iz main.cpp enkrat dnevno)
 //
-// NOVO (2026-03-03): briši najstarejše posnetke pred novim snemanjem
-//
-// Logika:
-//   1. Preštej datoteke *.avi v CAM_RECORD_DIR
-//   2. Izračunaj prosti prostor na SD
-//   3. Če je preveč datotek ALI premalo prostora:
-//      - Zberi seznam imen datotek v alphabetskem vrstnem redu
-//        (alphabetski = kronološki za format YYYYmmdd_HHMMSS.avi)
-//      - Briši od najstarejše naprej, dokler pogoji niso izpolnjeni
-//
-// Klic: znotraj record_task, pod sdMutex, PRED avi->open()
-//
-// Opomba o SD.totalBytes() / SD.usedBytes():
-//   ESP32 Arduino SD knjižnica vrača te vrednosti v bajtih.
-//   Za MB: delimo z (1024*1024).
-//   SD.totalBytes() in SD.usedBytes() sta na voljo od esp32 Arduino >= 2.0.
+// Logika (motion_update.md §4.3):
+//   - Odpre /video/ in iterira prek dnevnih poddirektorijev (YYYY-MM-DD)
+//   - Parsira datum iz imena direktorija
+//   - Briše direktorije starejše od settings.videoKeepDays dni
+//   - Brisanje: najprej vse datoteke v direktoriju, nato direktorij sam
 // =============================================================================
 
-static void cleanOldRecordings() {
-    // Zberemo seznam AVI datotek
-    File dir = SD.open(CAM_RECORD_DIR);
-    if (!dir || !dir.isDirectory()) {
-        LOG_WARN("CAM", "cleanOldRecordings: cannot open %s", CAM_RECORD_DIR);
-        return;
-    }
+void cleanOldRecordings() {
+    if (!sdPresent) return;
+    if (!SD.exists(CAM_RECORD_BASE)) return;
 
-    // Zberemo imena v statičen array (max 100 datotek v buffer)
-    // Heap alokacija ni varna v ISR kontekstu, tu smo v tasku → OK z new[]
-    static const int MAX_LIST = 100;
-    char** names = new char*[MAX_LIST];
-    if (!names) {
-        LOG_ERROR("CAM", "cleanOldRecordings: alloc failed");
-        dir.close();
-        return;
-    }
-    int count = 0;
+    time_t now    = time(nullptr);
+    time_t cutoff = now - ((time_t)settings.videoKeepDays * 86400L);
 
-    File f = dir.openNextFile();
-    while (f && count < MAX_LIST) {
-        const char* fname = f.name();
-        // Upoštevamo samo .avi datoteke (ne mape, ne .log itd.)
-        size_t flen = strlen(fname);
-        if (!f.isDirectory() && flen > 4 &&
-            strcasecmp(fname + flen - 4, ".avi") == 0)
-        {
-            names[count] = new char[flen + 1];
-            if (names[count]) {
-                strcpy(names[count], fname);
-                count++;
+    File videoDir = SD.open(CAM_RECORD_BASE);
+    if (!videoDir || !videoDir.isDirectory()) return;
+
+    File dayEntry = videoDir.openNextFile();
+    while (dayEntry) {
+        if (dayEntry.isDirectory()) {
+            String name = String(dayEntry.name());
+            dayEntry.close();
+
+            // Parsiramo datum iz imena direktorija (format: YYYY-MM-DD)
+            struct tm t = {};
+            if (strptime(name.c_str(), "%Y-%m-%d", &t)) {
+                time_t dirTime = mktime(&t);
+                if (dirTime < cutoff) {
+                    String fullPath = String(CAM_RECORD_BASE) + "/" + name;
+                    // Najprej pobriši vse datoteke v direktoriju
+                    File d = SD.open(fullPath);
+                    if (d) {
+                        File f = d.openNextFile();
+                        while (f) {
+                            String fp = fullPath + "/" + String(f.name());
+                            f.close();
+                            SD.remove(fp);
+                            f = d.openNextFile();
+                        }
+                        d.close();
+                    }
+                    SD.rmdir(fullPath);
+                    LOG_INFO("CAM", "Deleted old video dir: %s", fullPath.c_str());
+                }
             }
-        }
-        f.close();
-        f = dir.openNextFile();
-    }
-    if (f) f.close();
-    dir.close();
-
-    if (count == 0) {
-        delete[] names;
-        return;
-    }
-
-    // Alphabetsko sortiranje (insertion sort — majhen N, enostaven)
-    for (int i = 1; i < count; i++) {
-        char* key = names[i];
-        int j = i - 1;
-        while (j >= 0 && strcmp(names[j], key) > 0) {
-            names[j + 1] = names[j];
-            j--;
-        }
-        names[j + 1] = key;
-    }
-
-    LOG_INFO("CAM", "cleanOldRecordings: %d AVI files found", count);
-
-    // Preveri pogoje in briši od najstarejšega
-    int deleted = 0;
-    for (int i = 0; i < count; i++) {
-        // Preveri pogoje (po vsakem brisanju)
-        uint64_t freeBytes = SD.totalBytes() - SD.usedBytes();
-        uint32_t freeMB    = (uint32_t)(freeBytes / (1024ULL * 1024ULL));
-        int      remaining = count - deleted;
-
-        bool tooMany  = (remaining > CAM_MAX_RECORDINGS);
-        bool tooFull  = (freeMB < CAM_SD_FREE_MIN_MB);
-
-        if (!tooMany && !tooFull) break;  // pogoji izpolnjeni
-
-        // Sestavi polno pot
-        char fullPath[80];
-        snprintf(fullPath, sizeof(fullPath), "%s/%s", CAM_RECORD_DIR, names[i]);
-
-        if (SD.remove(fullPath)) {
-            LOG_INFO("CAM", "Deleted old recording: %s (free=%uMB, count=%d)",
-                     names[i], freeMB, remaining);
-            deleted++;
         } else {
-            LOG_WARN("CAM", "Failed to delete: %s", fullPath);
+            dayEntry.close();
         }
+        dayEntry = videoDir.openNextFile();
     }
-
-    if (deleted > 0) {
-        LOG_INFO("CAM", "cleanOldRecordings: deleted %d file(s)", deleted);
-    }
-
-    // Sprosti pomnilnik
-    for (int i = 0; i < count; i++) {
-        delete[] names[i];
-    }
-    delete[] names;
+    videoDir.close();
 }
 
 // =============================================================================
@@ -269,9 +219,6 @@ static void record_task(void* arg) {
 
     ensureRecordingDir();
 
-    // NOVO (2026-03-03): počisti stare posnetke PRED odprtjem nove datoteke
-    cleanOldRecordings();
-
     char filename[48];
     buildFilename(filename, sizeof(filename));
 
@@ -287,7 +234,8 @@ static void record_task(void* arg) {
         return;
     }
 
-    strncpy(_lastFilename, filename + strlen(CAM_RECORD_DIR) + 1, sizeof(_lastFilename) - 1);
+    // Shrani IME datoteke brez baznega direktorija (YYYY-MM-DD/HH-MM-SS.avi)
+    strncpy(_lastFilename, filename + strlen(CAM_RECORD_BASE) + 1, sizeof(_lastFilename) - 1);
     _lastFilename[sizeof(_lastFilename) - 1] = '\0';
 
     sensorData.isRecording = true;

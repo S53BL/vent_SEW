@@ -475,6 +475,10 @@ bool setupServer() {
                 if (v >= 5 && v <= 600) { settings.readIntervalSec = v; changed = true; }
             }
             if (doc.containsKey("screenAlwaysOn"))   { settings.screenAlwaysOn   = doc["screenAlwaysOn"];   changed = true; }
+            if (doc.containsKey("videoKeepDays")) {
+                uint8_t v = doc["videoKeepDays"];
+                if (v >= 1 && v <= 30) { settings.videoKeepDays = v; changed = true; }
+            }
             if (doc.containsKey("screenBrightness")) {
                 uint16_t v = doc["screenBrightness"];
                 if (v <= 1023) { settings.screenBrightness = v; changed = true; }
@@ -507,6 +511,7 @@ bool setupServer() {
         doc["readInterval"]    = settings.readIntervalSec;   // FIX: bilo readIntervalSec
         doc["screenAlwaysOn"]  = settings.screenAlwaysOn;
         doc["screenBrightness"]= settings.screenBrightness;
+        doc["videoKeepDays"]   = settings.videoKeepDays;
         String resp;
         serializeJsonPretty(doc, resp);
         request->send(200, "application/json", resp);

@@ -60,6 +60,7 @@
 #include "globals.h"
 #include "logging.h"
 #include <Wire.h>
+#include <SD.h>        // logMotionEvent() — zapis na SD kartico
 #include <SensirionI2cSht4x.h>
 #include <bsec2.h>                    // BSEC2 (Bosch-BSEC2-Library)
 #include <Adafruit_TCS34725.h>
@@ -241,9 +242,14 @@ static void bsecDataCallback(const bme68xData data,
             case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
                 sensorData.breathVOC = o.signal;
                 break;
-            case BSEC_OUTPUT_RAW_PRESSURE:
-                sensorData.press = o.signal + settings.pressOffset;
+            case BSEC_OUTPUT_RAW_PRESSURE: {
+                float hPa = o.signal / 100.0f;   // FIX: BSEC vrača Pa, ne hPa!
+                if (hPa >= PRESS_MIN && hPa <= PRESS_MAX)
+                    sensorData.press = hPa + settings.pressOffset;
+                else
+                    LOG_WARN("BSEC", "Invalid pressure: %.1f Pa (%.2f hPa)", o.signal, hPa);
                 break;
+            }
             case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
                 // Opcijsko: kompenzirana temp iz BME (za cross-check s SHT41)
                 break;
@@ -377,12 +383,11 @@ bool initSensors() {
 bool initSens() { return initSensors(); }
 
 // ============================================================
-// BRANJE SENZORJEV
+// LOČENE FUNKCIJE ZA 3-CONSKO ARHITEKTURO (graph_update.md)
 // ============================================================
-void readSensors() {
-    bool sht41Ok = false;
 
-    // --- SHT41 ---
+// --- readSHT41() — samo SHT41: temp + hum (klic v 3-min glavni zanki) ---
+void readSHT41() {
     if (sht41Present && checkI2CDevice(SHT41_ADDRESS)) {
         float rawT, rawH;
         uint16_t err = sht41->measureHighPrecision(rawT, rawH);
@@ -392,7 +397,7 @@ void readSensors() {
             sensorData.err &= ~ERR_SHT41;
             sensorData.temp = rawT + settings.tempOffset;
             sensorData.hum  = rawH + settings.humOffset;
-            sht41Ok = true;
+            newSensorData   = true;
             LOG_INFO("SHT41", "T=%.2f (raw=%.2f off=%.1f) H=%.1f (raw=%.1f off=%.1f)",
                      sensorData.temp, rawT, settings.tempOffset,
                      sensorData.hum,  rawH, settings.humOffset);
@@ -415,35 +420,14 @@ void readSensors() {
             resetI2CBus();
         }
     }
+}
 
-    // --- BME680 + BSEC2 ---
-    // run() sproži callback (bsecDataCallback) ko so novi podatki pripravljeni.
-    // Podatkov ne beremo direktno - pridejo skozi callback.
-    if (bme680Present) {
-        if (!iaqSensor.run()) {
-            // run() vrne false: ali ni novih podatkov (normalno) ali napaka
-            if (iaqSensor.status < BSEC_OK || iaqSensor.sensor.status < BME68X_OK) {
-                bme680ErrorCount++;
-                sensorData.err |= ERR_BME680;
-                LOG_WARN("BSEC", "Error (bsec=%d bme68x=%d count=%d/%d)",
-                         iaqSensor.status, iaqSensor.sensor.status,
-                         bme680ErrorCount, SENSOR_RETRY_COUNT);
-                if (bme680ErrorCount >= SENSOR_RETRY_COUNT) {
-                    bme680Present = false;
-                    bme680ErrorCount = 0;
-                    LOG_WARN("BSEC", "BME680 marked absent");
-                }
-            }
-            // else: run()==false brez napake = normalno, čaka na naslednji LP interval
-        }
-        // else: run()==true → callback je bil poklican, podatki so v sensorData
-    }
-
-    // --- TCS34725 ---
+// --- readTCS() — samo TCS34725: lux + cct + rgb (klic v 3-min glavni zanki) ---
+void readTCS() {
     if (tcsPresent && checkI2CDevice(TCS_ADDRESS)) {
         uint16_t r, g, b, c;
         tcs->getRawData(&r, &g, &b, &c);
-        float lux = tcs->calculateLux(r, g, b);
+        float lux    = tcs->calculateLux(r, g, b);
         uint16_t cct = tcs->calculateColorTemperature_dn40(r, g, b, c);
 
         if (lux >= LUX_MIN && lux < LUX_MAX) {
@@ -467,8 +451,11 @@ void readSensors() {
             tcsPresent = false; tcsErrorCount = 0;
         }
     }
+}
 
-    // --- PIR ---
+// --- readPIR() — samo PIR: edge detection, motionCount++ (klic v 1s hitri zanki) ---
+// POZOR: Ne logi vsak klic (kliče se vsako sekundo) — samo ob eventih.
+void readPIR() {
     bool pirCurrent = (digitalRead(PIR_PIN) == HIGH);
 
     if (pirCurrent && !pirLastState) {
@@ -487,26 +474,33 @@ void readSensors() {
         }
 
     } else if (pirCurrent && pirLastState) {
-        // Drži HIGH - gibanje se nadaljuje
+        // Drži HIGH - gibanje se nadaljuje, osvezi timestamp
         lastMotionMs = millis();
 
     } else if (!pirCurrent && pirLastState) {
-        // FALLING EDGE - gibanje se je ustavilo
-        LOG_DEBUG("PIR", "Motion ended");
+        // FALLING EDGE — gibanje zaključeno
+        completedMotionTime = time(nullptr);
+        LOG_DEBUG("PIR", "Motion completed at %lu", (unsigned long)completedMotionTime);
+        logMotionEvent(completedMotionTime);
     }
 
     pirLastState = pirCurrent;
 
-    // Briši motion flag po readInterval brez gibanja
-    if (!pirCurrent &&
-        millis() - lastMotionMs > (unsigned long)settings.readIntervalSec * 1000UL) {
+    // Briši motion flag po 30s brez gibanja (fiksno — settings.readIntervalSec je deprecated)
+    if (!pirCurrent && millis() - lastMotionMs > 30000UL) {
         sensorData.motion = false;
     }
+}
 
-    // newSensorData flag - postavi na true ob uspešnem branju
-    if (sht41Ok) {
-        newSensorData = true;
-    }
+// ============================================================
+// BRANJE SENZORJEV — ohranjeno kot wrapper za kompatibilnost
+// V novi arhitekturi main.cpp kliče readSHT41()+readTCS()+readPIR() ločeno.
+// runSens() / readSensors() sta ohranjena za morebitno staro kodo.
+// ============================================================
+void readSensors() {
+    readSHT41();
+    readTCS();
+    readPIR();
 }
 
 // Alias za main.cpp kompatibilnost
@@ -609,6 +603,40 @@ void performPeriodicI2CReset() {
 }
 
 // ============================================================
+// LOG MOTION EVENT — zapis FALLING EDGE timestampa na SD
+// Klic: readPIR() ob FALLING EDGE (ko pirCurrent=LOW, pirLastState=HIGH)
+// Format: /motion/YYYY-MM-DD.csv, vsaka vrstica = Unix timestamp
+// Pogoji za zapis: sdPresent && timeSynced && sdMutex dostopen
+// ============================================================
+void logMotionEvent(time_t ts) {
+    if (!sdPresent)   return;
+    if (!timeSynced)  return;  // brez NTP čas nima smisla
+
+    char path[32];
+    struct tm* ti = localtime(&ts);
+    strftime(path, sizeof(path), "/motion/%Y-%m-%d.csv", ti);
+
+    if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+        LOG_WARN("PIR", "logMotionEvent: SD mutex timeout");
+        return;
+    }
+
+    // Ustvari /motion/ direktorij če ne obstaja
+    if (!SD.exists("/motion")) SD.mkdir("/motion");
+
+    File f = SD.open(path, FILE_APPEND);
+    if (f) {
+        f.println((unsigned long)ts);
+        f.close();
+        LOG_DEBUG("PIR", "logMotionEvent: %lu → %s", (unsigned long)ts, path);
+    } else {
+        LOG_WARN("PIR", "logMotionEvent: cannot open %s", path);
+    }
+
+    xSemaphoreGive(sdMutex);
+}
+
+// ============================================================
 // RESET (ob kritični napaki)
 // ============================================================
 void resetSensors() {
@@ -624,17 +652,15 @@ void resetSensors() {
 }
 
 // ============================================================
-// BSEC2 LOOP POLLING - klic iz main loop() pri vsakem prehodu
+// BSEC2 POLLING — klic iz 1s hitre zanke (graph_update.md)
 // ============================================================
 //
-// Zakaj je ta funkcija potrebna:
-//   BSEC2 SAMPLE_RATE_LP vzorči vsakih ~3s. Da callback (bsecDataCallback)
-//   sploh dobi priložnost za sprožitev, mora iaqSensor.run() biti klican
-//   pogosto - vsaj vsakih 3s. runSens() se kliče vsakih 30s kar je
-//   prepočasi. Ta funkcija se kliče pri vsakem loop() prehodu (~10ms).
+// runBsec(): BSEC2 SAMPLE_RATE_LP vzorči vsakih ~3s. Za pravilen callback
+//   mora iaqSensor.run() biti klican pogosto (vsaj vsako sekundo).
 //   run() je neblokirajoča: takoj vrne false če ni čas za meritev.
+//   Ko pride čas za vzorčenje (vsake ~3s), pokliče bsecDataCallback().
 //
-void runBsecLoop() {
+void runBsec() {
     if (!bme680Present) return;
 
     if (!iaqSensor.run()) {
@@ -643,16 +669,19 @@ void runBsecLoop() {
         if (iaqSensor.status < BSEC_OK || iaqSensor.sensor.status < BME68X_OK) {
             bme680ErrorCount++;
             sensorData.err |= ERR_BME680;
-            LOG_WARN("BSEC", "Loop error (bsec=%d bme68x=%d count=%d/%d)",
+            LOG_WARN("BSEC", "Error (bsec=%d bme68x=%d count=%d/%d)",
                      iaqSensor.status, iaqSensor.sensor.status,
                      bme680ErrorCount, SENSOR_RETRY_COUNT);
             if (bme680ErrorCount >= SENSOR_RETRY_COUNT) {
                 bme680Present = false;
                 bme680ErrorCount = 0;
-                LOG_WARN("BSEC", "BME680 marked absent (loop errors)");
+                LOG_WARN("BSEC", "BME680 marked absent");
             }
         }
         // else: run()==false brez napake = normalno, čaka na naslednji LP interval
     }
     // else: run()==true → bsecDataCallback je bil poklican, sensorData je posodobljen
 }
+
+// Alias za kompatibilnost (staro ime)
+void runBsecLoop() { runBsec(); }

@@ -150,6 +150,9 @@ struct Settings {
     uint16_t sendIntervalSec;  // privzeto: 180
     uint16_t readIntervalSec;  // privzeto: 30
 
+    // --- Video hranjenje ---
+    uint8_t videoKeepDays;  // Privzeto: 7 (dni hranjenja posnetkov)
+
     // --- Rezerva ---
     float reserved1;
     float reserved2;
@@ -216,8 +219,19 @@ extern bool newSensorData;
 //   - Brez volatile bi optimizer lahko cachiral staro vrednost v record_task!
 extern volatile unsigned long lastMotionMs;
 
+// --- PIR: čas zadnjega zaključenega gibanja (FALLING EDGE timestamp) ---
+// completedMotionTime: MORA biti volatile — piše readPIR() (loop kontekst),
+//   bere disp.cpp updateUI() (isti kontekst, toda za konsistentnost)
+// Vrednost 0 = ni še nobene zaznave od zagona
+extern volatile time_t completedMotionTime;
+
+// Nova timing spremenljivka: hitra zanka (1s — BSEC2 + PIR + BAT)
+// Ob zagonu se postavi na 0 da se prva iteracija sproži takoj.
+extern unsigned long lastFastTickMs;
+
 // Ostale timing spremenljivke (samo loop() kontekst - volatile ni potreben)
-extern unsigned long lastSensorReadMs;
+// lastSensorReadMs: DEPRECATED — 30s monolitno branje zamenjano z ločenima zankama
+extern unsigned long lastSensorReadMs;   // DEPRECATED
 extern unsigned long lastSendMs;
 extern unsigned long lastWifiCheckMs;
 extern unsigned long lastNtpSyncMs;

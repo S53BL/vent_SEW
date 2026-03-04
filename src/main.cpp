@@ -1,38 +1,56 @@
-// main.cpp - vent_SEW main entry point
-// Enota: Waveshare ESP32-S3-Touch-LCD-2
-// Display: ST7789T3 240x320, LVGL
-// WiFi -> POST /data na REW, GET OpenMeteo (15min)
+// main.cpp - vent_SEW main entry point (graph_update.md 2026-03-04)
 //
-// Setup koraki:
+// ARHITEKTURA ZANKE (3 cone, §2 spec):
+//
+//   VSAK LOOP() PREHOD (~10ms):
+//     runBsec()     — BSEC2 LP polling (neblokirajoča, kliče se pri vsakem prehodu)
+//                     LP vzorči vsake ~3s → callback ob vsakem vzorcu, ostalo vrne false
+//
+//   HITRA ZANKA  (1s — FAST_TICK_INTERVAL):
+//     readPIR()     — PIR edge detection + motionCount++ + startMotionRecording()
+//     readBattery() — ADC baterija
+//
+//   GLAVNA ZANKA (3min — MAIN_CYCLE_INTERVAL):
+//     readSHT41()       — SHT41: temp + hum
+//     readTCS()         — TCS34725: lux + cct
+//     updateWeather()   — OpenMeteo check (interno preverja 15-min interval)
+//     graphStorePoint() — shrani GraphPoint v RAM + LittleFS
+//     graphRefresh()    — posodobi LVGL graf
+//     sendToREW()       — HTTP POST na REW
+//     sensorData.motionCount = 0  — reset po pošiljanju
+//     saveSDData()      — CSV log na SD
+//     flushBufferToSD() — flush log bufferja
+//
+//   WIFI / NTP (10min — WIFI_CHECK_INTERVAL):
+//     connectWifi()
+//     syncNTP()
+//
+// SETUP vrstni red (12 korakov):
 //   1. Serial
-//   2. NVS / globals (loadSettings je znotraj initGlobals)
-//   3. initLogging()        ← MORA biti pred prvim flushBufferToSD() klicem
-//   4. SD (initSD)
-//   5. WiFi (statični IP iz settings)
-//   6. NTP + myTZ.setLocation()
-//   7. Zaslon
-//   8. Senzorji
-//   9. Kamera
-//  10. HTTP server
-//  11. Weather (init + prvi fetch)
-//  12. Startup validacija
+//   2. initGlobals() — NVS/settings/sensorData/timing
+//   3. initLogging()
+//   4. initSD()
+//   5. WiFi + statični IP
+//   6. NTP + myTZ
+//   7. initDisplay()
+//   8. initSens()
+//   9. initCamera()
+//  10. setupServer() (HTTP)
+//  11. initWeather() + fetchWeatherNow()
+//  12. graphStoreInit() + graphLoadFromLittleFS() + loadGraphPrefs()
+//  13. checkAllDevices()
 //
-// POPRAVKI (2026-02-28):
-//   - initLogging() dodan v setup()
-//   - myTZ.setLocation() dodan po NTP sinhronizaciji
-//   - Odstranjen lokalni #define WIFI_CHECK_MS - duplikat WIFI_CHECK_INTERVAL
-//
-// POPRAVKI (2026-03-01):
-//   - FIX: Lokalne static timing vars (lastWifiCheck, lastSensorRead, lastSensorSend)
-//     zamenjane z globals (lastWifiCheckMs, lastSensorReadMs, lastSendMs iz globals.h)
-//     Razlog: globals.cpp je definiral te spremenljivke (lastWifiCheckMs itd.)
-//     ampak main.cpp jih ni nikoli bral ali pisal - namesto tega je imel
-//     lastWifiCheck, lastSensorRead, lastSensorSend kot lokalne static.
-//     Rezultat: globals timing vars so bile mrtev kod, nikoli posodobljene.
-//     Sedaj: main.cpp bere in piše globals timing vars → checkAllDevices() in
-//     morebitni drugi moduli imajo dostop do timing informacij.
-//   - FIX: motionCount reset je samo tukaj (bil je duplikat v http.cpp sendToREW)
-//     Enotna točka reseta: main.cpp loop po vsakem sendInterval → konsistentno
+// SPREMEMBE (graph_update.md):
+//   - GraphStorePoint → GraphPoint (nova struktura iz disp_graph.h)
+//   - graphStoreAdd() → graphStorePoint()
+//   - graphStoreLoad() → graphLoadFromLittleFS()
+//   - gsCount → graphStoreCount()
+//   - loadGraphPrefs() premaknjen: po initGraph() v setup()
+//   - 3-conska zanka: hitra (1s), glavna (3min), WiFi (10min)
+//   - lastFastTickMs kot globals timing var
+//   - runBsec() klic pri VSAKEM loop() prehodu (ne v fast tick!)
+//   - readPIR() + readBattery() v 1s hitro zanko
+//   - readSHT41() + readTCS() v 3-min glavno zanko
 
 #include <Arduino.h>
 #include "config.h"
@@ -50,14 +68,6 @@
 #include <WiFi.h>
 #include <time.h>
 #include "wifi_config.h"
-
-// FIX (2026-03-01): Lokalne static vars ODSTRANJENE - uporabljamo globals iz globals.h
-// ODSTRANJENO: static unsigned long lastWifiCheck  = 0;  → lastWifiCheckMs  (globals)
-// ODSTRANJENO: static unsigned long lastSensorRead = 0;  → lastSensorReadMs (globals)
-// ODSTRANJENO: static unsigned long lastSensorSend = 0;  → lastSendMs       (globals)
-// Razlog: globals.cpp definira lastWifiCheckMs, lastSensorReadMs, lastSendMs
-//         ampak main.cpp jih ni pisal → mrtev kod v globals.
-//         Sedaj main.cpp piše in bere direktno globals timing vars.
 
 // ============================================================
 // WiFi
@@ -99,26 +109,19 @@ static void syncNTP() {
         strftime(tbuf, sizeof(tbuf), "%d.%m.%Y %H:%M:%S", ti);
         LOG_INFO("MAIN", "NTP sync OK: %s", tbuf);
 
-        // Inicializiraj ezTime timezone po uspešni NTP sinhronizaciji
         myTZ.setPosix(TZ_STRING);
-        LOG_INFO("MAIN", "myTZ set via POSIX: %s", TZ_STRING);
-
-        // Čakaj da myTZ postane ready (events processing)
         unsigned long myTZStart = millis();
         bool myTZReady = false;
         while (millis() - myTZStart < 15000) {
-            events();  // ezTime processing
-            if (myTZ.now() > 1577836800UL) {  // 2020-01-01
-                myTZReady = true;
-                break;
-            }
+            events();
+            if (myTZ.now() > 1577836800UL) { myTZReady = true; break; }
             delay(200);
         }
 
         if (myTZReady) {
             timeSynced = true;
             sensorData.err &= ~ERR_NTP;
-            lastNtpSyncMs = millis();  // globals timing var
+            lastNtpSyncMs = millis();
             LOG_INFO("MAIN", "myTZ ready: %s", myTZ.dateTime().c_str());
         } else {
             sensorData.err |= ERR_NTP;
@@ -139,10 +142,10 @@ void setup() {
     delay(200);
     Serial.println("\n\n=== vent_SEW boot ===");
 
-    // 1. globals: loadSettings() + sensorData init + sdMutex
+    // 1. Globals: loadSettings() + sensorData init + timing reset
     initGlobals();
 
-    // 2. initLogging() MORA biti tukaj preden se kliče flushBufferToSD()
+    // 2. Logging (MORA biti pred flushBufferToSD)
     initLogging();
     LOG_INFO("MAIN", "=== vent_SEW boot  ID:%s ===", settings.unitId);
 
@@ -154,7 +157,7 @@ void setup() {
         LOG_INFO("MAIN", "SD OK");
     }
 
-    // 4. WiFi - statični IP iz settings (string "192.168.2.191")
+    // 4. WiFi - statični IP iz settings
     WiFi.mode(WIFI_STA);
     if (strlen(settings.localIP) > 0) {
         IPAddress ip, gw, sn(255, 255, 255, 0), dns(8, 8, 8, 8);
@@ -162,13 +165,13 @@ void setup() {
             WiFi.config(ip, gw, sn, dns);
             LOG_INFO("MAIN", "Static IP: %s  GW: %s", settings.localIP, settings.gateway);
         } else {
-            LOG_WARN("MAIN", "Invalid IP/GW in settings - using DHCP");
+            LOG_WARN("MAIN", "Invalid IP/GW - using DHCP");
         }
     }
     connectWifi();
-    lastWifiCheckMs = millis();  // FIX: globals var
+    lastWifiCheckMs = millis();
 
-    // 5. NTP (+ myTZ.setLocation)
+    // 5. NTP + myTZ
     if (WiFi.status() == WL_CONNECTED) syncNTP();
 
     // 6. Zaslon
@@ -177,7 +180,7 @@ void setup() {
 
     // 7. Senzorji
     if (!initSens()) {
-        LOG_WARN("MAIN", "SHT41 not found - continuing (other sensors may work)");
+        LOG_WARN("MAIN", "SHT41 not found - continuing");
     }
     LOG_INFO("MAIN", "Sensors init done");
 
@@ -192,124 +195,163 @@ void setup() {
     if (!setupServer()) {
         LOG_WARN("MAIN", "HTTP server start failed");
     } else {
-        LOG_INFO("MAIN", "HTTP server started at %s", WiFi.localIP().toString().c_str());
+        LOG_INFO("MAIN", "HTTP server started");
     }
 
     // 10. Weather
     initWeather();
     if (WiFi.status() == WL_CONNECTED) fetchWeatherNow();
 
-    // 11. Graf: inicializacija LittleFS ring bufferja
-    // graphStoreInit() ustvari/validira /graph.bin na LittleFS
-    // graphStoreLoad() naloži obstoječo zgodovino v RAM → graf ni prazen po restartu
+    // 11. Graf: LittleFS ring buffer + preference
+    //   Vrstni red je obvezen:
+    //   1) graphStoreInit()         — odpre LittleFS, ustvari/validira /graph.bin
+    //   2) graphLoadFromLittleFS()  — RAM ← LittleFS (do 480 točk)
+    //   3) loadGraphPrefs()         — NVS → currentGraphSensor, currentGraphHours
+    //   initGraph() kliče disp.cpp → ne kliče loadGraphPrefs() sam!
     if (!graphStoreInit()) {
         LOG_WARN("MAIN", "graph_store init failed - graphs will be empty");
     } else {
-        graphStoreLoad();
-        LOG_INFO("MAIN", "graph_store OK: %d points loaded", gsCount);
+        graphLoadFromLittleFS();
+        LOG_INFO("MAIN", "graph_store OK: %d points loaded", graphStoreCount());
     }
+    loadGraphPrefs();  // NVS → currentGraphSensor + currentGraphHours
 
     // 12. Startup validacija
     checkAllDevices();
 
-    // Inicializiraj timing vars (globals)
-    lastSensorReadMs = millis();
-    lastSendMs       = millis();
+    // Timing init (lastFastTickMs = 0 → prva iteracija sproži takoj)
+    // initGlobals() že resteuje vse timing vars na 0
+    // samo lastMainCycleMs postavimo nazaj, da se 3-min zanka ne sproži takoj
+    // (senzorji potrebujejo čas za stabilizacijo)
+    lastMainCycleMs = millis();  // prva glavna zanka čez 3 min
 
     LOG_INFO("MAIN", "=== Boot complete === ID:%s IP:%s ===",
              settings.unitId, WiFi.localIP().toString().c_str());
 
-    // Flush začetnih logov na SD
     if (sdPresent) flushBufferToSD();
 }
 
 // ============================================================
-// LOOP
+// LOOP — 3-conska arhitektura (graph_update.md §2)
 // ============================================================
 void loop() {
     unsigned long now = millis();
 
-    // WiFi watchdog - WIFI_CHECK_INTERVAL iz config.h (600000ms = 10min)
-    // FIX: lastWifiCheckMs je globals var (prej: lokalna lastWifiCheck)
+    // ------------------------------------------------------------------
+    // CONA 1: WIFI / NTP watchdog — WIFI_CHECK_INTERVAL (10 min)
+    // ------------------------------------------------------------------
     if (now - lastWifiCheckMs >= WIFI_CHECK_INTERVAL) {
-        lastWifiCheckMs = now;  // FIX: globals var
+        lastWifiCheckMs = now;
         connectWifi();
         if (WiFi.status() == WL_CONNECTED && !timeSynced) {
             syncNTP();
         }
-        // Periodično posodabljanje NTP (vsakih 30 min, če je že sinhroniziran)
         if (WiFi.status() == WL_CONNECTED && timeSynced &&
             now - lastNtpSyncMs >= NTP_UPDATE_INTERVAL) {
             syncNTP();
         }
     }
 
-    // Branje senzorjev po intervalu
-    // FIX: lastSensorReadMs je globals var (prej: lokalna lastSensorRead)
-    if (now - lastSensorReadMs >= (unsigned long)settings.readIntervalSec * 1000UL) {
-        lastSensorReadMs = now;  // FIX: globals var
-        runSens();
-        readBattery();
+    // ------------------------------------------------------------------
+    // CONA 2: HITRA ZANKA — FAST_TICK_INTERVAL (1 sekunda)
+    //   - readPIR():     PIR edge detection, motionCount++
+    //   - readBattery(): ADC baterija
+    // ------------------------------------------------------------------
+    if (now - lastFastTickMs >= FAST_TICK_INTERVAL) {
+        lastFastTickMs = now;
 
-        // Periodični checks
+        readPIR();      // PIR edge detection — ne blokira
+        readBattery();  // ADC, ~16 vzorcev × 100µs ≈ 1.6ms
+
+        // Periodični I2C health checks (interno preverja 10/30-min interval)
         performPeriodicSensorCheck();
         performPeriodicI2CReset();
     }
 
-    // Pošiljanje na REW po intervalu
-    // FIX: lastSendMs je globals var (prej: lokalna lastSensorSend)
-    if (now - lastSendMs >= (unsigned long)settings.sendIntervalSec * 1000UL) {
-        lastSendMs = now;  // FIX: globals var
-        sendToREW();
-        // FIX: motionCount reset je SAMO tukaj (bil duplikat v http.cpp sendToREW)
-        // Reset vsakič po sendInterval, ne glede na HTTP rezultat
-        sensorData.motionCount = 0;
-        saveSDData();
-    }
-
-    // Weather update (non-blocking, interno preverja interval)
-    updateWeather();
-
-    // --- Glavna 3-minutna zanka ---
-    // Vse operacije ki se dotikajo podatkov tečejo skupaj vsake 3 minute.
-    // DATA_SEND_INTERVAL je definiran v config.h kot 180000UL (3 min).
-    // newSensorData flag (iz sens.cpp) se ne briše tukaj — ostane za disp.cpp
-    if (now - lastMainCycleMs >= DATA_SEND_INTERVAL) {
+    // ------------------------------------------------------------------
+    // CONA 3: GLAVNA ZANKA — MAIN_CYCLE_INTERVAL (3 minute)
+    //   - readSHT41() + readTCS(): senzorji (blocking, ~50ms skupaj)
+    //   - updateWeather(): OpenMeteo (interno preverja 15-min interval)
+    //   - graphStorePoint(): shrani GraphPoint v RAM + LittleFS
+    //   - graphRefresh(): posodobi LVGL graf
+    //   - sendToREW(): HTTP POST
+    //   - saveSDData(): CSV log
+    //   - flushBufferToSD(): flush log bufferja
+    // ------------------------------------------------------------------
+    if (now - lastMainCycleMs >= MAIN_CYCLE_INTERVAL) {
         lastMainCycleMs = now;
 
-        // 1. Shrani točko v LittleFS ring buffer (graph_store)
-        //    Samo če imamo vsaj veljavno temperaturo
-        if (sensorData.temp > -900.0f) {
-            GraphStorePoint pt;
-            pt.ts     = (uint32_t)time(nullptr);
-            pt.temp   = sensorData.temp;
-            pt.hum    = sensorData.hum;
-            pt.iaq    = (float)sensorData.iaq;
-            pt.wind   = weatherData.valid ? weatherData.windSpeed : 0.0f;
-            pt.motion = sensorData.motionCount;
-            pt.pad    = 0;
-            graphStoreAdd(pt);
+        // Branje senzorjev (I2C)
+        readSHT41();    // SHT41: temp + hum → sensorData.temp/hum
+        readTCS();      // TCS34725: lux + cct → sensorData.lux/cct
 
-            // 2. Osvezi LVGL graf na zaslonu
+        // Weather update (non-blocking, interno preverja 15-min interval)
+        updateWeather();
+
+        // Shrani GraphPoint v ring buffer (RAM + LittleFS)
+        // Samo če imamo veljavno temperaturo (SHT41 mora biti prisoten)
+        if (sensorData.temp > -900.0f) {
+            GraphPoint pt;
+            pt.ts    = (uint32_t)time(nullptr);
+            pt.temp  = sensorData.temp;
+            pt.hum   = sensorData.hum;
+            pt.press = sensorData.press;    // BSEC2 (iz fast tick callback)
+            pt.iaq   = (float)sensorData.iaq;
+            pt.lux   = sensorData.lux;      // TCS34725
+            pt.wind  = weatherData.valid ? weatherData.windSpeed      : 0.0f;
+            pt.cloud = weatherData.valid ? (float)weatherData.cloudCover : 0.0f;
+            graphStorePoint(pt);
+
+            // Posodobi LVGL graf z novimi podatki
             graphRefresh();
 
-            LOG_INFO("MAIN", "3min cycle: T=%.1f H=%.1f IAQ=%d pts=%d",
-                     sensorData.temp, sensorData.hum, sensorData.iaq, gsCount);
+            LOG_INFO("MAIN", "3min cycle: T=%.1f H=%.1f IAQ=%d lux=%.0f pts=%d",
+                     sensorData.temp, sensorData.hum,
+                     sensorData.iaq, sensorData.lux,
+                     graphStoreCount());
+        } else {
+            LOG_WARN("MAIN", "3min cycle: skipping graphStore (SHT41 invalid)");
         }
 
-        // 3. Flush log RAM bufferja na SD (premaknjen sem iz 60s timera)
+        // HTTP POST na REW
+        sendToREW();
+        // Reset motionCount po pošiljanju (enotna točka reseta — ne v http.cpp!)
+        sensorData.motionCount = 0;
+
+        // CSV log na SD
+        saveSDData();
+
+        // Flush log RAM bufferja na SD
         if (sdPresent) flushBufferToSD();
     }
 
-    // Kamera - podaljšanje snemanja ob gibanju
+    // ------------------------------------------------------------------
+    // ENKRAT DNEVNO — brisanje starih video posnetkov
+    // ------------------------------------------------------------------
+    {
+        static unsigned long lastCleanMs = 0;
+        if (millis() - lastCleanMs >= 86400000UL) {  // 24h
+            lastCleanMs = millis();
+            cleanOldRecordings();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // STALNI PROCESI — pri vsakem loop() prehodu
+    // ------------------------------------------------------------------
+
+    // BSEC2: klic pri VSAKEM loop() prehodu (~10ms)
+    // run() je neblokirajoča — vrne false takoj če ni čas za LP vzorec.
+    // LP vzorči vsake ~3s → callback takrat, sicer brez I2C komunikacije.
+    // Klic tukaj (ne v 1s fast tick!) zagotavlja, da BSEC dobi run()
+    // tudi med dolgimi operacijami (HTTP POST, SD), ko fast tick ne pali.
+    runBsec();
+
+    // Kamera: podaljšanje snemanja ob gibanju
     performMotionRecordingCheck();
 
-    // LVGL / zaslon update
+    // LVGL / zaslon posodobitev (touch, animacije, draw)
     updateUI();
-
-    // BSEC2 mora biti klican pogosto (vsaj vsake ~3s za LP mode)
-    // run() je neblokirajoča - varno klicati pri vsakem loop() prehodu
-    runBsecLoop();
 
     delay(10);
 }

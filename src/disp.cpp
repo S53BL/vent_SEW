@@ -448,8 +448,32 @@ void updateUI() {
         lv_label_set_text(lbl_lux, buf);
     }
 
-    lv_obj_set_style_text_color(lbl_pir,
-        sd.motion ? lv_color_hex(0xFF6644) : lv_color_hex(COL_TEXT_SECONDARY), 0);
+    // PIR indikator — 4 stanja (motion_update.md §2.2)
+    if (sd.motion) {
+        // PIR aktiven (HIGH) — gibanje zdaj
+        lv_label_set_text(lbl_pir, "NOW");
+        lv_obj_set_style_text_color(lbl_pir, lv_color_hex(0xFF6644), 0);
+    } else if (completedMotionTime > 0) {
+        // Zaključeno gibanje — pokaži čas FALLING EDGE
+        time_t pir_now = time(nullptr);
+        struct tm* pir_ti = localtime((time_t*)&completedMotionTime);
+        char pirBuf[16];
+        long diff = (long)(pir_now - (time_t)completedMotionTime);
+        if (diff < 86400L) {
+            strftime(pirBuf, sizeof(pirBuf), "%H:%M", pir_ti);
+        } else {
+            strftime(pirBuf, sizeof(pirBuf), "-%H:%M", pir_ti);
+        }
+        lv_label_set_text(lbl_pir, pirBuf);
+        lv_color_t col = (diff < 3600L)
+            ? lv_color_hex(0xFFD700)   // < 1h: rumena
+            : lv_color_hex(0x666666);  // > 1h: siva
+        lv_obj_set_style_text_color(lbl_pir, col, 0);
+    } else {
+        // Ni še nobene zaznave od zagona
+        lv_label_set_text(lbl_pir, "---");
+        lv_obj_set_style_text_color(lbl_pir, lv_color_hex(0x333333), 0);
+    }
 
     lv_timer_handler();
 }

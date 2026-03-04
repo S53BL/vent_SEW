@@ -232,8 +232,21 @@ extern const int    numNetworks;
 // -----------------------------------------------------------------------------
 // CASOVNI INTERVALI (ms)
 // -----------------------------------------------------------------------------
-#define SENSOR_READ_INTERVAL    30000UL   // Branje senzorjev: 30 s
-#define DATA_SEND_INTERVAL     180000UL   // Posiljanje na REW: 3 min
+
+// Hitra zanka: BSEC run() + PIR edge detection + baterija ADC
+// iaqSensor.run() mora biti kican pogosto za pravilen BSEC2 callback (~3s LP).
+#define FAST_TICK_INTERVAL      1000UL   // 1 sekunda
+
+// Glavna zanka: readSHT41+readTCS, graphStorePoint, sendToREW, saveSDData
+#define MAIN_CYCLE_INTERVAL   180000UL   // 3 minute
+
+// DATA_SEND_INTERVAL ohranjen za kompatibilnost (= MAIN_CYCLE_INTERVAL)
+#define DATA_SEND_INTERVAL     180000UL   // 3 minute
+
+// DEPRECATED: ni vec v uporabi — branje senzorjev je zdaj razdeljeno med
+// hitro zanko (BSEC+PIR+BAT vsako sekundo) in glavno zanko (SHT41+TCS 3 min).
+#define SENSOR_READ_INTERVAL    30000UL   // DEPRECATED
+
 #define WIFI_CHECK_INTERVAL    600000UL   // Preverjanje WiFi: 10 min
 #define SCREEN_TIMEOUT          60000UL   // Izklop zaslona po 60 s
 #define MOTION_DEBOUNCE           500UL   // PIR debounce: 500 ms

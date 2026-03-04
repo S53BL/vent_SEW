@@ -68,6 +68,10 @@ void performMotionRecordingCheck();
 // Prisilna ustavitev (npr. pred OTA update)
 void stopRecordingNow();
 
+// Brisanje starih posnetkov (klic iz main.cpp enkrat dnevno)
+// Briše /video/YYYY-MM-DD/ direktorije starejše od settings.videoKeepDays
+void cleanOldRecordings();
+
 // =============================================================================
 // Status
 // =============================================================================

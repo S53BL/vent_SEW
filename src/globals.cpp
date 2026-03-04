@@ -58,8 +58,15 @@ bool newSensorData = false;
 //   spremembe iz loop() niso vidne → kamera ne ve za nova gibanja!
 volatile unsigned long lastMotionMs     = 0;
 
+// PIR: čas zadnjega zaključenega gibanja (FALLING EDGE timestamp)
+// 0 = ni še nobene zaznave od zagona
+volatile time_t completedMotionTime     = 0;
+
+// Nova timing spremenljivka: hitra zanka (1s — BSEC2 + PIR + BAT)
+unsigned long lastFastTickMs       = 0;
+
 // Ostale timing spremenljivke (samo loop() kontekst - volatile ni potreben)
-unsigned long lastSensorReadMs     = 0;
+unsigned long lastSensorReadMs     = 0;  // DEPRECATED
 unsigned long lastSendMs           = 0;
 unsigned long lastWifiCheckMs      = 0;
 unsigned long lastNtpSyncMs        = 0;
@@ -111,6 +118,7 @@ static void initDefaults() {
     settings.screenBrightness = SETTINGS_DEFAULT_BRIGHTNESS;
     settings.sendIntervalSec  = SETTINGS_DEFAULT_SEND_INTERVAL;
     settings.readIntervalSec  = SETTINGS_DEFAULT_READ_INTERVAL;
+    settings.videoKeepDays    = 7;
     settings.reserved1 = settings.reserved2 = 0.0f;
     settings.reservedBool1 = false;
 
@@ -202,7 +210,8 @@ void initGlobals() {
     newSensorData = false;
 
     // Reset vseh timing spremenljivk
-    lastSensorReadMs     = 0;
+    lastFastTickMs       = 0;
+    lastSensorReadMs     = 0;   // DEPRECATED
     lastSendMs           = 0;
     lastWifiCheckMs      = 0;
     lastNtpSyncMs        = 0;

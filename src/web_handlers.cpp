@@ -89,6 +89,7 @@ static String navBar() {
            "<a href='/settings'>Nastavitve</a>"
            "<a href='/sd-list'>SD / Posnetki</a>"
            "<a href='/logs'>Logi</a>"
+           "<a href='/motion'>Gibanje</a>"
            "<a href='http://" + String(settings.localIP) + ":81/stream' class='nav-stream' title='Stream kamere' target='_blank'>&#128249;</a>"
            "</nav>";
 }
@@ -192,7 +193,7 @@ void handleRoot(AsyncWebServerRequest* request) {
     snprintf(buf, sizeof(buf), "%u", cs.totalRecordings);
     html += "<tr><th>Skupaj posnetkov</th><td>" + String(buf) + "</td></tr>";
     if (cs.lastFile[0]) {
-        html += "<tr><th>Zadnji posnetek</th><td><a class='file-link' href='/sd-file?name=/recordings/";
+        html += "<tr><th>Zadnji posnetek</th><td><a class='file-link' href='/sd-file?name=/video/";
         html += cs.lastFile;
         html += "'>";
         html += cs.lastFile;
@@ -266,7 +267,8 @@ function save() {
         sendInterval:     parseInt(document.getElementById('sendInterval').value),
         readInterval:     parseInt(document.getElementById('readInterval').value),
         screenBrightness: parseInt(document.getElementById('brightness').value),
-        screenAlwaysOn:   document.getElementById('screenAlwaysOn').checked
+        screenAlwaysOn:   document.getElementById('screenAlwaysOn').checked,
+        videoKeepDays:    parseInt(document.getElementById('videoKeepDays').value)
     };
     fetch('/api/settings',{method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -311,6 +313,10 @@ function resetDev() {
     html += "<h2>Zaslon</h2><table>";
     html += "<tr><th>Svetlost (0-1023)</th><td><input id='brightness' type='number' min='0' max='1023' value='" + String(settings.screenBrightness) + "'></td></tr>";
     html += "<tr><th>Zaslon vedno vklopljen</th><td><input id='screenAlwaysOn' type='checkbox'" + String(settings.screenAlwaysOn ? " checked" : "") + "></td></tr>";
+    html += "</table>";
+
+    html += "<h2>Video posnetki</h2><table>";
+    html += "<tr><th>Hranjenje posnetkov [dni]</th><td><input id='videoKeepDays' type='number' min='1' max='30' value='" + String(settings.videoKeepDays) + "'></td></tr>";
     html += "</table>";
 
     html += "<button class='btn btn-blue' onclick='save()'>Shrani</button>&nbsp;";
@@ -631,6 +637,301 @@ void handleDeleteFiles(AsyncWebServerRequest* request) {
     request->send(200, "application/json", responseJson);
 }
 
+// =============================================================================
+// GET /motion — gibanje: dnevni CSV log + seznam video posnetkov
+// =============================================================================
+void handleMotion(AsyncWebServerRequest* request) {
+    LOG_INFO("WEB", "GET /motion");
+
+    // Izberemo dan — URL param ?day=2026-03-04, privzeto danes
+    String day;
+    if (request->hasParam("day")) {
+        day = request->getParam("day")->value();
+    } else {
+        day = timeSynced ? myTZ.dateTime("Y-m-d") : "";
+    }
+
+    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+                  "<title>SEW Gibanje</title>";
+    html += CSS;
+    html += "</head><body>";
+    html += navBar();
+    html += "<h1>SEW — Gibanje</h1><div class='wrap'>";
+
+    // Trenutno stanje PIR
+    html += "<h2>Trenutno</h2><table>";
+    html += "<tr><th>PIR stanje</th><td>";
+    html += sensorData.motion
+        ? "<span class='err'>&#128994; AKTIVEN — gibanje zaznano</span>"
+        : "<span class='ok'>&#9899; Mirovanje</span>";
+    html += "</td></tr>";
+    html += "<tr><th>Skupaj zaznav (od zagona)</th><td>" + String(sensorData.motionCount) + "</td></tr>";
+    if (completedMotionTime > 0) {
+        struct tm* ti = localtime((time_t*)&completedMotionTime);
+        char tbuf[32];
+        strftime(tbuf, sizeof(tbuf), "%d.%m.%Y %H:%M:%S", ti);
+        html += "<tr><th>Zadnje gibanje</th><td>" + String(tbuf) + "</td></tr>";
+    }
+    html += "</table>";
+
+    if (!sdPresent) {
+        html += "<p class='warn'>SD kartica ni prisotna — ni arhiva gibanja.</p>";
+        html += "</div></body></html>";
+        request->send(200, "text/html; charset=utf-8", html);
+        return;
+    }
+
+    // Izbira dne: dropdown iz obstoječih /motion/YYYY-MM-DD.csv
+    std::vector<String> csvDays;
+    if (SD.exists("/motion")) {
+        File mdir = SD.open("/motion");
+        if (mdir && mdir.isDirectory()) {
+            File f = mdir.openNextFile();
+            while (f) {
+                String n = String(f.name());
+                bool isDir = f.isDirectory();
+                f.close();
+                if (!isDir && n.endsWith(".csv") && n.length() == 14) {
+                    // Format: YYYY-MM-DD.csv (10 chars + .csv = 14)
+                    csvDays.push_back(n.substring(0, 10));
+                }
+                f = mdir.openNextFile();
+            }
+            mdir.close();
+        }
+    }
+    std::sort(csvDays.begin(), csvDays.end(), [](const String& a, const String& b){ return a > b; });
+
+    if (day.isEmpty() && !csvDays.empty()) day = csvDays[0];
+
+    // Dropdown za izbiro dne
+    html += "<h2>Dnevni arhiv</h2>";
+    html += "<form method='get' style='margin-bottom:12px'>";
+    html += "<select name='day' onchange='this.form.submit()' style='width:auto;min-width:160px'>";
+    if (csvDays.empty()) {
+        html += "<option>Ni podatkov</option>";
+    }
+    for (auto& d : csvDays) {
+        html += "<option value='" + d + "'";
+        if (d == day) html += " selected";
+        html += ">" + d + "</option>";
+    }
+    html += "</select></form>";
+
+    // Preberi CSV za izbrani dan
+    if (!day.isEmpty()) {
+        String csvPath = "/motion/" + day + ".csv";
+        if (SD.exists(csvPath)) {
+            // Preberi vsebino: pričakovane vrstice: timestamp,count ali timestamp
+            // Povzetek: skupno zaznav, po uri
+            int hourCounts[24] = {};
+            int totalDay = 0;
+
+            File f = SD.open(csvPath, FILE_READ);
+            if (f) {
+                while (f.available()) {
+                    String line = f.readStringUntil('\n');
+                    line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) continue;
+                    // Format: UNIX_TS,count   ali samo UNIX_TS
+                    int comma = line.indexOf(',');
+                    time_t ts = 0;
+                    int cnt = 1;
+                    if (comma > 0) {
+                        ts  = (time_t)line.substring(0, comma).toInt();
+                        cnt = line.substring(comma + 1).toInt();
+                    } else {
+                        ts = (time_t)line.toInt();
+                    }
+                    if (ts > 0) {
+                        struct tm* ti = localtime(&ts);
+                        if (ti && ti->tm_hour >= 0 && ti->tm_hour < 24) {
+                            hourCounts[ti->tm_hour] += cnt;
+                            totalDay += cnt;
+                        }
+                    }
+                }
+                f.close();
+            }
+
+            html += "<h2>Povzetek: " + day + "  (skupaj: " + String(totalDay) + " zaznav)</h2>";
+
+            // Urni histogram (preprosta bar tabela)
+            html += "<table><tr><th style='width:60px'>Ura</th><th>Zaznave</th></tr>";
+            int maxHour = 1;
+            for (int h = 0; h < 24; h++) if (hourCounts[h] > maxHour) maxHour = hourCounts[h];
+            for (int h = 0; h < 24; h++) {
+                if (hourCounts[h] == 0) continue;
+                int barW = (hourCounts[h] * 200) / maxHour;
+                char tbuf[8];
+                snprintf(tbuf, sizeof(tbuf), "%02d:00", h);
+                html += "<tr><td>" + String(tbuf) + "</td><td>";
+                html += "<div style='display:inline-block;background:#b71c1c;height:14px;width:"
+                        + String(barW) + "px;vertical-align:middle'></div> ";
+                html += "<span style='color:#ccc'>" + String(hourCounts[h]) + "</span>";
+                html += "</td></tr>";
+            }
+            html += "</table>";
+            html += "<p style='font-size:11px;color:#444;margin-top:4px'>"
+                    "<a class='file-link' href='/sd-file?name=" + csvPath + "' download>CSV prenos</a></p>";
+        } else {
+            html += "<p class='dim'>Ni dnevnega CSV loga za " + day + ".</p>";
+        }
+
+        // AVI posnetki za ta dan: /video/YYYY-MM-DD/
+        String videoDir = "/video/" + day;
+        if (SD.exists(videoDir)) {
+            std::vector<String> aviFiles;
+            File vd = SD.open(videoDir);
+            if (vd && vd.isDirectory()) {
+                File f = vd.openNextFile();
+                while (f) {
+                    String n = String(f.name());
+                    bool isDir = f.isDirectory();
+                    f.close();
+                    if (!isDir && (n.endsWith(".avi") || n.endsWith(".AVI")))
+                        aviFiles.push_back(n);
+                    f = vd.openNextFile();
+                }
+                vd.close();
+            }
+            std::sort(aviFiles.begin(), aviFiles.end());
+
+            html += "<h2>Video posnetki: " + day + " (" + String(aviFiles.size()) + ")</h2>";
+            if (aviFiles.empty()) {
+                html += "<p class='dim'>Ni posnetkov za ta dan.</p>";
+            } else {
+                html += "<table><tr><th>Datoteka</th><th>Prenos</th></tr>";
+                for (auto& n : aviFiles) {
+                    String fullPath = videoDir + "/" + n;
+                    // Velikost
+                    File tmp = SD.open(fullPath);
+                    size_t sz = tmp ? tmp.size() : 0;
+                    if (tmp) tmp.close();
+                    html += "<tr><td><a class='file-link' href='/sd-file?name=" + fullPath + "'>";
+                    html += n + "</a>  <span class='dim'>" + fmtBytes(sz) + "</span></td>";
+                    html += "<td><a class='btn btn-blue' href='/sd-file?name=" + fullPath + "' download>Download</a></td></tr>";
+                }
+                html += "</table>";
+            }
+        } else {
+            html += "<p class='dim' style='margin-top:8px'>Ni video direktorija za " + day + ".</p>";
+        }
+    }
+
+    // ==========================================================
+    // SEKCIJA D — Skupna statistika (spec §5.2)
+    // ==========================================================
+    html += "<h2>Skupna statistika</h2><table>";
+
+    // Skupaj zaznav danes (iz today's CSV)
+    {
+        String todayDay = timeSynced ? myTZ.dateTime("Y-m-d") : day;
+        String todayCsv = "/motion/" + todayDay + ".csv";
+        int todayTotal = 0;
+        if (sdPresent && SD.exists(todayCsv)) {
+            File f = SD.open(todayCsv, FILE_READ);
+            if (f) {
+                while (f.available()) {
+                    String line = f.readStringUntil('\n');
+                    line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) continue;
+                    int comma = line.indexOf(',');
+                    todayTotal += (comma > 0) ? line.substring(comma + 1).toInt() : 1;
+                }
+                f.close();
+            }
+        }
+        html += "<tr><th>Skupaj zaznav danes</th><td>" + String(todayTotal) + "</td></tr>";
+    }
+
+    // Skupaj zaznav zadnjih 7 dni (seštevek iz vseh CSV datotek)
+    {
+        int week7total = 0;
+        if (sdPresent && SD.exists("/motion")) {
+            time_t now_t = time(nullptr);
+            time_t cutoff7 = now_t - 7L * 86400L;
+            File mdir = SD.open("/motion");
+            if (mdir && mdir.isDirectory()) {
+                File f = mdir.openNextFile();
+                while (f) {
+                    String n = String(f.name());
+                    bool isDir = f.isDirectory();
+                    f.close();
+                    if (!isDir && n.endsWith(".csv") && n.length() == 14) {
+                        // Parsiramo datum iz imena (YYYY-MM-DD.csv)
+                        struct tm td = {};
+                        String dstr = n.substring(0, 10);
+                        if (strptime(dstr.c_str(), "%Y-%m-%d", &td)) {
+                            time_t ft = mktime(&td);
+                            if (ft >= cutoff7) {
+                                String csvFull = "/motion/" + n;
+                                File cf = SD.open(csvFull, FILE_READ);
+                                if (cf) {
+                                    while (cf.available()) {
+                                        String line = cf.readStringUntil('\n');
+                                        line.trim();
+                                        if (line.isEmpty() || line.startsWith("#")) continue;
+                                        int comma = line.indexOf(',');
+                                        week7total += (comma > 0) ? line.substring(comma + 1).toInt() : 1;
+                                    }
+                                    cf.close();
+                                }
+                            }
+                        }
+                    }
+                    f = mdir.openNextFile();
+                }
+                mdir.close();
+            }
+        }
+        html += "<tr><th>Skupaj zaznav (7 dni)</th><td>" + String(week7total) + "</td></tr>";
+    }
+
+    // Prostor posnetkov na SD (/video/)
+    if (sdPresent && SD.exists("/video")) {
+        // Gremo čez vse dnevne direktorije in seštejemo velikosti
+        size_t videoTotal = 0;
+        File vroot = SD.open("/video");
+        if (vroot && vroot.isDirectory()) {
+            File dayD = vroot.openNextFile();
+            while (dayD) {
+                if (dayD.isDirectory()) {
+                    String dayPath = "/video/" + String(dayD.name());
+                    dayD.close();
+                    File dd = SD.open(dayPath);
+                    if (dd && dd.isDirectory()) {
+                        File af = dd.openNextFile();
+                        while (af) {
+                            videoTotal += af.size();
+                            af.close();
+                            af = dd.openNextFile();
+                        }
+                    }
+                    if (dd) dd.close();
+                } else {
+                    dayD.close();
+                }
+                dayD = vroot.openNextFile();
+            }
+            vroot.close();
+        }
+        html += "<tr><th>Prostor posnetkov (/video)</th><td>" + fmtBytes(videoTotal) + "</td></tr>";
+    } else {
+        html += "<tr><th>Prostor posnetkov (/video)</th><td class='dim'>n/a</td></tr>";
+    }
+
+    // Nastavljeno hranjenje
+    html += "<tr><th>Hranjenje posnetkov</th><td>" + String(settings.videoKeepDays) + " dni"
+            " <span class='dim'>(<a class='file-link' href='/settings'>sprememba</a>)</span></td></tr>";
+
+    html += "</table>";
+
+    html += "</div></body></html>";
+    request->send(200, "text/html; charset=utf-8", html);
+}
+
+// =============================================================================
 // Pomožna funkcija za obdelavo posamezne datoteke
 void processFileForDeletion(const String& fname, const String& todayStr, int& deletedCount, int& skippedCount) {
     String sanitized = fname;

@@ -1,75 +1,68 @@
-// graph_store.h - LittleFS ring buffer za zgodovino grafov (vent_SEW)
+// graph_store.h - LittleFS ring buffer za zgodovino grafov (graph_update.md §4)
 //
-// Shrani do 480 GraphStorePoint zapisov (24h pri 3-min intervalu) v /graph.bin.
-// Ring buffer deluje brez premikanja podatkov — samo head kazalec se premika.
-// Ob restartu graphStoreLoad() obnovi RAM buffer iz LittleFS.
+// Shrani do GRAPH_HISTORY_MAX GraphPoint zapisov (24h pri 3-min intervalu)
+// v /graph.bin na LittleFS.
 //
-// Struktura datoteke /graph.bin:
-//   [0..3]   magic   uint32_t  0xC0FFEE01
-//   [4..7]   head    uint32_t  indeks naslednjega zapisa (0..479)
-//   [8..11]  count   uint32_t  stevilo veljavnih zapisov (0..480)
-//   [12+]    data    GraphStorePoint[480]
+// Ključno načelo (§3.1 spec):
+//   RAM in LittleFS sta vedno identični kopiji.
+//   graphStorePoint() zapiše v oba sinhrono.
+//   graphRefresh() bere SAMO iz RAM — nikoli direktno iz LittleFS med delovanjem.
+//   Ob zagonu graphLoadFromLittleFS() obnovi RAM iz LittleFS.
 //
-// Skupaj: 12 + 480*24 = 11532 bytes (~11.3 KB)
+// Struktura datoteke /graph.bin (§4.1):
+//   [0..1]   head    uint16_t  indeks naslednjega zapisa (0..GRAPH_HISTORY_MAX-1)
+//   [2..3]   count   uint16_t  število veljavnih zapisov (0..GRAPH_HISTORY_MAX)
+//   [4..7]   rezerva uint32_t  za prihodnje uporabe (vpisano 0)
+//   [8+]     data    GraphPoint[GRAPH_HISTORY_MAX]  ring buffer
+//
+// Skupaj: 8 + 480*32 = 15368 bytes (~15.0 KB)
+// LittleFS razpoložljivo: ~2.9 MB → poraba 0.53%
+//
+// Konsistentnost ob izpadu napajanja (§4.5):
+//   graphLoadFromLittleFS() preveri ts vsake točke: ts > 0.
+//   Neveljaven ts → točka se preskoči.
+//
+// OPOMBA: LittleFS je na ločenem flash-u, ne deli SPI busa z LCD/SD.
+//   → sdMutex pri LittleFS ni potreben. SD operacije ga še vedno zahtevajo.
 
 #pragma once
 #include <Arduino.h>
 #include <LittleFS.h>
-
-// -----------------------------------------------------------------------
-// GraphStorePoint — ena meritev za shranjevanje (24 bytes, poravnana)
-// -----------------------------------------------------------------------
-struct GraphStorePoint {
-    uint32_t ts;        // Unix timestamp [s]           (4 bytes)
-    float    temp;      // Temperatura [°C]             (4 bytes)
-    float    hum;       // Relativna vlažnost [%]       (4 bytes)
-    float    iaq;       // IAQ indeks 0–500             (4 bytes)
-    float    wind;      // Hitrost vetra [km/h]         (4 bytes)
-    uint16_t motion;    // Število PIR dogodkov v uri   (2 bytes)
-    uint16_t pad;       // Poravnava na 24 bytes        (2 bytes)
-};
-static_assert(sizeof(GraphStorePoint) == 24, "GraphStorePoint mora biti 24 bytes");
+#include "disp_graph.h"   // GraphPoint, GRAPH_HISTORY_MAX
 
 // -----------------------------------------------------------------------
 // Konstante
 // -----------------------------------------------------------------------
-#define GRAPH_STORE_MAX_POINTS   480          // 24h pri 3-min intervalu
 #define GRAPH_STORE_FILE         "/graph.bin"
-#define GRAPH_STORE_MAGIC        0xC0FFEE01u
-
-// Velikost glave datoteke
-#define GRAPH_STORE_HEADER_SIZE  12  // magic(4) + head(4) + count(4)
-
-// Offset prvega zapisa v datoteki
-#define GRAPH_STORE_DATA_OFFSET  GRAPH_STORE_HEADER_SIZE
+#define GRAPH_STORE_HEADER_SIZE  8    // head(2) + count(2) + rezerva(4)
 
 // -----------------------------------------------------------------------
-// RAM buffer (extern — dostopen za graphRefresh v disp_graph.cpp)
-// -----------------------------------------------------------------------
-extern GraphStorePoint gsHistory[GRAPH_STORE_MAX_POINTS];
-extern int        gsHead;    // indeks najstarejšega veljavnega zapisa
-extern int        gsCount;   // število veljavnih zapisov (0..480)
-
-// -----------------------------------------------------------------------
-// API
+// API (graph_update.md §4.2)
 // -----------------------------------------------------------------------
 
-// Inicializacija: odpre LittleFS (če ni že odprt), ustvari/validira /graph.bin
-// Kliči enkrat v setup() — PRED graphStoreLoad()
+// Inicializacija: odpre LittleFS, ustvari/validira /graph.bin.
+// Kliči enkrat v setup() — PRED graphLoadFromLittleFS().
 // Vrne true ob uspehu.
 bool graphStoreInit();
 
-// Naloži obstoječe točke iz /graph.bin v RAM buffer (gsHistory, gsHead, gsCount)
-// Kliči po graphStoreInit() v setup()
-void graphStoreLoad();
+// Ob zagonu: naloži /graph.bin → RAM history[].
+// Kliči po graphStoreInit() in pred initGraph() v setup().
+void graphLoadFromLittleFS();
 
-// Doda novo točko v ring buffer (RAM + LittleFS atomično)
-// Kliči enkrat vsake 3 minute iz glavne zanke
-void graphStoreAdd(const GraphStorePoint& pt);
+// Zapiši točko v RAM history[] IN v /graph.bin sinhrono.
+// Kliči enkrat vsake 3 minute iz 3-minutne zanke.
+void graphStorePoint(const GraphPoint& pt);
 
-// Vrne kazalec na točko po logičnem indeksu (0 = najstarejša, gsCount-1 = najnovejša)
-// Vrne nullptr če idx izven dosega
-const GraphStorePoint* graphStoreGet(int idx);
+// Vrne točke v kronološkem vrstnem redu (najstarejša→najnovejša) v outBuf[].
+// maxPts: največje število točk za kopiranje (tipično DISPLAY_POINTS ali GRAPH_HISTORY_MAX).
+// Vrne dejansko število kopiranih točk.
+int graphGetHistoryOrdered(GraphPoint* outBuf, int maxPts);
 
-// Izbriše /graph.bin in ponastavi RAM buffer (za debug/reset)
+// Vrne število veljavnih točk v RAM bufferju (0..GRAPH_HISTORY_MAX).
+int graphStoreCount();
+
+// Vrne true če graphStoreInit() je bil uspešen in je LittleFS dosegljiv.
+bool graphStoreReady();
+
+// Izbriše /graph.bin in ponastavi RAM buffer (za debug/reset).
 void graphStoreClear();

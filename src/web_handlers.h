@@ -14,3 +14,4 @@ void handleSDList(AsyncWebServerRequest* request);
 void handleSDFile(AsyncWebServerRequest* request);
 void handleLogs(AsyncWebServerRequest* request);
 void handleDeleteFiles(AsyncWebServerRequest* request);
+void handleMotion(AsyncWebServerRequest* request);

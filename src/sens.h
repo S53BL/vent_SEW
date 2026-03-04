@@ -37,8 +37,14 @@ bool initSens();    // Alias za main.cpp
 
 // Branje (klic iz main loop)
 void readSensors();
-void runSens();     // Alias za main.cpp
-void runBsecLoop(); // Klic iz main loop() - BSEC2 LP polling (vsaj vsake 3s)
+void runSens();     // Alias za main.cpp (wrapper → kliče readSHT41+readTCS+readPIR)
+
+// Ločene funkcije za 3-consko arhitekturo (graph_update.md):
+void readSHT41();   // Samo SHT41: temp + hum (3-min glavna zanka)
+void readTCS();     // Samo TCS34725: lux + cct + rgb (3-min glavna zanka)
+void readPIR();     // Samo PIR: edge detection, motionCount++ (1s hitra zanka)
+void runBsec();     // Samo BSEC2: iaqSensor.run() → callback (1s hitra zanka)
+void runBsecLoop(); // Alias za runBsec() — ohranjen za kompatibilnost
 
 // I2C bus recovery
 void initI2CBus();
@@ -51,6 +57,9 @@ void performPeriodicI2CReset();     // preventivni reset, vsakih 30 min
 
 // Baterija
 void readBattery();
+
+// PIR motion event — zapis na SD (klic iz readPIR() ob FALLING EDGE)
+void logMotionEvent(time_t ts);
 
 // Reset (ob kritični napaki)
 void resetSensors();
