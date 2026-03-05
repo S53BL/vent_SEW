@@ -11,7 +11,7 @@
 #include <stdarg.h>
 
 // RAM buffer - flush ko preseže to mejo
-#define LOG_BUFFER_MAX  10240   // 10kB
+#define LOG_BUFFER_MAX  12288   // 12kB
 
 // Log level konstante
 enum LogLevel {

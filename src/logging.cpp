@@ -1,6 +1,6 @@
 // logging.cpp - Logging system implementation for vent_SEW
 //
-// RAM buffer (flush pri 10kB ali vsakih 60s iz main loop):
+// RAM buffer (flush samo ko doseže 12 kB - periodični flush odstranjen):
 //   logBuffer         - String RAM buffer (extern v globals.h)
 //   loggingInitialized - bool flag (extern v globals.h)
 //   currentLogFile     - ime aktivne log datoteke (extern v globals.h)
@@ -117,8 +117,11 @@ void flushBufferToSD() {
     if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
         // Ne moremo dobiti mutexa - vrnemo buffer nazaj
         logBuffer = tempBuffer + logBuffer;
-        if (logBuffer.length() > LOG_BUFFER_MAX * 2) {
+        if (logBuffer.length() > LOG_BUFFER_MAX * 3) {  // 36 kB cap (3× safety)
+            Serial.printf("LOG: WARNING - Buffer overflow! Truncating %d → %d bytes\n",
+                          logBuffer.length(), LOG_BUFFER_MAX);
             logBuffer = logBuffer.substring(logBuffer.length() - LOG_BUFFER_MAX);
+            sensorData.err |= ERR_SD;  // Signal problema
         }
         flushing = false;
         return;
@@ -129,8 +132,11 @@ void flushBufferToSD() {
         if (sdMutex) xSemaphoreGive(sdMutex);
         // SD ni dostopen - vrnemo buffer nazaj da ne izgubimo logov
         logBuffer = tempBuffer + logBuffer;
-        if (logBuffer.length() > LOG_BUFFER_MAX * 2) {
+        if (logBuffer.length() > LOG_BUFFER_MAX * 3) {  // 36 kB cap (3× safety)
+            Serial.printf("LOG: WARNING - Buffer overflow! Truncating %d → %d bytes\n",
+                          logBuffer.length(), LOG_BUFFER_MAX);
             logBuffer = logBuffer.substring(logBuffer.length() - LOG_BUFFER_MAX);
+            sensorData.err |= ERR_SD;  // Signal problema
         }
         Serial.printf("LOG: SD flush failed - buffer restored (%d bytes)\n", logBuffer.length());
         flushing = false;

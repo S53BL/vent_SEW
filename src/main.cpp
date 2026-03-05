@@ -229,6 +229,7 @@ void setup() {
     LOG_INFO("MAIN", "=== Boot complete === ID:%s IP:%s ===",
              settings.unitId, WiFi.localIP().toString().c_str());
 
+    // Initial log flush po boot-u (da vidimo startup loge na SD)
     if (sdPresent) flushBufferToSD();
 }
 
@@ -357,8 +358,9 @@ void loop() {
         // CSV log na SD
         saveSDData();
 
-        // Flush log RAM bufferja na SD
-        if (sdPresent) flushBufferToSD();
+        // Flush log RAM bufferja — ODSTRANJEN periodični flush!
+        // Zdaj se logi zapisujejo SAMO ko buffer doseže 12 kB (LOG_BUFFER_MAX).
+        // To zmanjša write operacije na SD z ~6× (prej vsake 3 min, zdaj ~20 min).
     }
 
     // ------------------------------------------------------------------
