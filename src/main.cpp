@@ -238,6 +238,41 @@ void loop() {
     unsigned long now = millis();
 
     // ------------------------------------------------------------------
+    // PENDING WIFI RECONNECT — DEW pristop (identičen DEW main.cpp)
+    // Nastavi ga: http.cpp POST /api/settings ob spremembi unitId
+    // Logika:     Po 500ms zamiku (da HTTP odgovor prispe do brskalnika)
+    //             nastavi novi statični IP in pokliče connectWifi().
+    // 500ms je dovolj kratkek da brskalnik dobi odgovor, preden WiFi pade.
+    // ------------------------------------------------------------------
+    {
+        static unsigned long pendingReconnectTime = 0;
+        if (pendingWiFiReconnect) {
+            if (pendingReconnectTime == 0) {
+                pendingReconnectTime = now;
+                LOG_INFO("MAIN", "WiFi reconnect scheduled — čakam 500ms za dostavo odgovora");
+            } else if (now - pendingReconnectTime >= 500) {
+                pendingWiFiReconnect = false;
+                pendingReconnectTime = 0;
+                LOG_INFO("MAIN", "WiFi reconnect z novim IP: %s gw: %s",
+                         settings.localIP, settings.gateway);
+                WiFi.disconnect(true);
+                delay(200);
+                IPAddress ip, gw, sn(255,255,255,0), dns(8,8,8,8);
+                ip.fromString(settings.localIP);
+                gw.fromString(settings.gateway);
+                WiFi.config(ip, gw, sn, dns);
+                connectWifi();
+                lastWifiCheckMs = now;  // reset watchdog timer
+                if (WiFi.status() == WL_CONNECTED) {
+                    LOG_INFO("MAIN", "WiFi reconnected: %s", WiFi.localIP().toString().c_str());
+                } else {
+                    LOG_ERROR("MAIN", "WiFi reconnect failed po spremembi unitId");
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // CONA 1: WIFI / NTP watchdog — WIFI_CHECK_INTERVAL (10 min)
     // ------------------------------------------------------------------
     if (now - lastWifiCheckMs >= WIFI_CHECK_INTERVAL) {

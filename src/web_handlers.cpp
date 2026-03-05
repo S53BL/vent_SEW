@@ -249,18 +249,31 @@ void handleSettings(AsyncWebServerRequest* request) {
     String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
                   "<title>SEW Nastavitve</title>";
     html += CSS;
-    // FIX (2026-03-02): JS save() objekt je pošiljal napačne ključe:
-    //   sendIntervalSec → popravljeno v sendInterval
-    //   readIntervalSec → popravljeno v readInterval
-    // http.cpp POST /api/settings handler pričakuje "sendInterval" / "readInterval".
-    // S starimi ključi se containsKey() ni nikoli ujemal → intervali se niso shranili.
+    // IDENTITETA (2026-03-05):
+    //   - localIP in gateway se NE pošiljata v JSON — sta computed iz unitId
+    //   - JS vsebuje lookup tabelo SEW1..SEW5 → IP (enako kot sewIdToIP v config.h)
+    //   - Po uspešnem shranjevanju prikaže sporočilo z novim IP naslovom
+    //   - rewIP ni več nastavljiv prek web UI
     html += R"(
 <script>
+var SEW_IPS = {
+    'SEW1': '192.168.2.195',
+    'SEW2': '192.168.2.196',
+    'SEW3': '192.168.2.197',
+    'SEW4': '192.168.2.198',
+    'SEW5': '192.168.2.199'
+};
+function sewIpForId(id) {
+    return SEW_IPS[id] || '192.168.2.199';
+}
+function onUnitIdChange() {
+    var id = document.getElementById('unitId').value;
+    document.getElementById('computedIP').textContent = sewIpForId(id);
+}
 function save() {
+    var unitId = document.getElementById('unitId').value;
     var d = {
-        unitId:           document.getElementById('unitId').value,
-        localIP:          document.getElementById('localIP').value,
-        rewIP:            document.getElementById('rewIP').value,
+        unitId:           unitId,
         tempOffset:       parseFloat(document.getElementById('tempOffset').value),
         humOffset:        parseFloat(document.getElementById('humOffset').value),
         pressOffset:      parseFloat(document.getElementById('pressOffset').value),
@@ -275,28 +288,72 @@ function save() {
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(d)})
     .then(r=>r.json())
-    .then(d=>{
-        var m=document.getElementById('msg');
-        m.className = d.status==='OK' ? 'ok' : 'err';
-        m.textContent = d.status==='OK' ? 'Shranjeno!' : 'Napaka: '+(d.message||'?');
-    }).catch(e=>{ document.getElementById('msg').textContent='Napaka: '+e; });
+    .then(function(resp){
+        var m = document.getElementById('msg');
+        if (resp.status === 'OK') {
+            if (resp.newIP) {
+                // Identiteta spremenjena — DEW pristop: čakaj 7s, nato redirect na novi IP
+                m.className = 'ok';
+                m.innerHTML = 'Shranjeno! WiFi se reconnecta na novi IP <b>' + resp.newIP + '</b>...';
+                setTimeout(function(){
+                    m.innerHTML = 'Redirecting na <b>' + resp.newIP + '</b>...';
+                    setTimeout(function(){
+                        window.location.href = 'http://' + resp.newIP + '/settings';
+                    }, 1000);
+                }, 7000);
+            } else {
+                m.className = 'ok';
+                m.innerHTML = 'Shranjeno.';
+            }
+        } else {
+            m.className = 'err';
+            m.textContent = 'Napaka: ' + (resp.message || resp.status || '?');
+        }
+    }).catch(function(e){ document.getElementById('msg').textContent = 'Napaka: ' + e; });
 }
 function resetDev() {
     if(confirm('Ponastaviti na privzete vrednosti?'))
         fetch('/api/reset',{method:'POST'})
         .then(r=>r.json())
-        .then(()=>{ setTimeout(()=>location.reload(), 500); })
-        .catch(e=>alert('Reset napaka: '+e));
+        .then(function(){ setTimeout(function(){ location.reload(); }, 500); })
+        .catch(function(e){ alert('Reset napaka: '+e); });
 }
 </script>)";
     html += "</head><body>";
     html += navBar();
     html += "<h1>SEW — Nastavitve</h1><div class='wrap'>";
 
+    // Identiteta: select SEW1..SEW5 z IP-ji, computed IP read-only prikaz
+    // localIP in rewIP nista nastavljivi — LocalIP je computed, REW IP je fiksna konstanta
     html += "<h2>Identiteta</h2><table>";
-    html += "<tr><th>Unit ID</th><td><input id='unitId' value='" + String(settings.unitId) + "' maxlength='7'></td></tr>";
-    html += "<tr><th>Lokalni IP</th><td><input id='localIP' value='" + String(settings.localIP) + "'></td></tr>";
-    html += "<tr><th>REW IP</th><td><input id='rewIP' value='" + String(settings.rewIP) + "'></td></tr>";
+    html += "<tr><th>Unit ID</th><td>";
+    html += "<select id='unitId' onchange='onUnitIdChange()'>";
+    const char* sewIds[] = {"SEW1","SEW2","SEW3","SEW4","SEW5"};
+    const char* sewIps[] = {"192.168.2.195","192.168.2.196","192.168.2.197","192.168.2.198","192.168.2.199"};
+    for (int i = 0; i < 5; i++) {
+        html += "<option value='";
+        html += sewIds[i];
+        html += "'";
+        if (strcmp(settings.unitId, sewIds[i]) == 0) html += " selected";
+        html += ">";
+        html += sewIds[i];
+        html += " \xe2\x80\x94 ";
+        html += sewIps[i];
+        html += "</option>";
+    }
+    html += "</select></td></tr>";
+    html += "<tr><th>IP naslov (computed)</th><td>";
+    html += "<span id='computedIP' style='color:#4da6ff;font-weight:bold'>";
+    html += settings.localIP;
+    html += "</span>";
+    html += " <span style='color:#555;font-size:11px'>(iz Unit ID — ni nastavljiv)</span>";
+    html += "</td></tr>";
+    html += "<tr><th>REW IP</th><td>";
+    html += "<span style='color:#888'>";
+    html += settings.rewIP;
+    html += "</span>";
+    html += " <span style='color:#555;font-size:11px'>(fiksna konstanta)</span>";
+    html += "</td></tr>";
     html += "</table>";
 
     html += "<h2>Kalibracija</h2><table>";

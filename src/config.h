@@ -224,6 +224,26 @@ extern const char*  ssidList[];
 extern const char*  passwordList[];
 extern const int    numNetworks;
 
+// Fiksna tabela identitet SEW enot (nikoli v NVS!)
+// | ID   | IP             |
+// |------|----------------|
+// | SEW1 | 192.168.2.195  |
+// | SEW2 | 192.168.2.196  |
+// | SEW3 | 192.168.2.197  |
+// | SEW4 | 192.168.2.198  |
+// | SEW5 | 192.168.2.199  |
+#define SEW_GATEWAY         "192.168.2.1"   // Fiksni gateway — nikoli v NVS
+
+inline const char* sewIdToIP(const char* unitId) {
+    if (unitId == nullptr) return "192.168.2.199";
+    if (strcmp(unitId, "SEW1") == 0) return "192.168.2.195";
+    if (strcmp(unitId, "SEW2") == 0) return "192.168.2.196";
+    if (strcmp(unitId, "SEW3") == 0) return "192.168.2.197";
+    if (strcmp(unitId, "SEW4") == 0) return "192.168.2.198";
+    if (strcmp(unitId, "SEW5") == 0) return "192.168.2.199";
+    return "192.168.2.199";  // Privzeto: SEW5 za neznan ID
+}
+
 #define SEW_IP              "192.168.2.191"
 #define REW_IP              "192.168.2.190"
 #define CEE_IP              "192.168.2.192"

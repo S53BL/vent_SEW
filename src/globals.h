@@ -5,10 +5,12 @@
 // =============================================================================
 //
 // IDENTITETA ENOTE:
-//   - Vsak SEW ima unikatni ID (npr. "SEW1", "SEW2", ...) shranjen v NVS
-//   - Vsak SEW ima staticni IP shranjen v NVS (npr. 192.168.2.195, .196, ...)
-//   - ID in IP se nastavljata preko web vmesnika (Settings stran)
-//   - Firmware je identicen za vse SEW enote - razlikujejo se samo po NVS
+//   - Vsak SEW ima unikatni ID (npr. "SEW1"..."SEW5") shranjen v NVS
+//   - IP in gateway sta DETERMINISTIČNA — izračunata iz unitId v initGlobals() (sewIdToIP())
+//   - Samo unitId se shranjuje v NVS; localIP in gateway se NIKOLI ne shranjujeta
+//   - Firmware je identičen za vse SEW enote — razlikujejo se samo po unitId v NVS
+//   - Default ob first-boot: SEW5 (192.168.2.199)
+//   - Tabela: SEW1=.195, SEW2=.196, SEW3=.197, SEW4=.198, SEW5=.199 (config.h)
 //
 // KOMUNIKACIJSKI PROTOKOL SEW REW:
 //   - SEW poslja HTTP POST na en endpoint: http://<REW_IP>/data
@@ -34,7 +36,8 @@
 //   - Wire1 (bus 1): NI VEČ V UPORABI (IO33/IO34 nista dostopni na konektorjih P1/P2)
 //
 // STORAGE:
-//   - NVS "sew_cfg"  : unitId, IPs, kalibracija, settings
+//   - NVS "sew_cfg"  : unitId, rewIP, kalibracija, display settings, intervali
+//                      (localIP in gateway se NE shranjujeta — sta computed iz unitId)
 //   - NVS "sew_bsec" : BSEC state vektor
 //   - SD kartica     : dnevni logi + CSV meritve
 //
@@ -127,10 +130,13 @@ struct Settings {
     // --- Identiteta enote ---
     char unitId[8];         // "SEW1".."SEW9"
 
-    // --- Omrezje (kot string, npr. "192.168.2.195") ---
-    char localIP[16];       // Staticni IP te enote
-    char gateway[16];       // Gateway, npr. "192.168.2.1"
-    char rewIP[16];         // IP REW enote, privzeto REW_IP
+    // --- Omrezje ---
+    // POZOR: localIP in gateway se NE shranjujeta v NVS!
+    // Sta izračunana v initGlobals() iz unitId (sewIdToIP) in SEW_GATEWAY.
+    // Tukaj sta samo za branje s strani main.cpp, web_handlers.cpp in http.cpp.
+    char localIP[16];       // Computed: sewIdToIP(unitId) — ni NVS!
+    char gateway[16];       // Computed: SEW_GATEWAY — ni NVS!
+    char rewIP[16];         // IP REW enote, privzeto REW_IP — JE v NVS
 
     // --- Kalibracija SHT41 ---
     float tempOffset;       // [C]  privzeto: 0.0
@@ -169,9 +175,8 @@ struct Settings {
 #define NVS_NAMESPACE                   "sew_cfg"
 
 // --- Privzete vrednosti ---
-#define SETTINGS_DEFAULT_UNIT_ID        "SEW1"
-#define SETTINGS_DEFAULT_LOCAL_IP       "192.168.2.195"
-#define SETTINGS_DEFAULT_GATEWAY        "192.168.2.1"
+// POZOR: localIP in gateway NI VEČ default — sta computed iz unitId (sewIdToIP v config.h)
+#define SETTINGS_DEFAULT_UNIT_ID        "SEW5"   // First-boot default: SEW5 = 192.168.2.199
 #define SETTINGS_DEFAULT_REW_IP         REW_IP
 #define SETTINGS_DEFAULT_BRIGHTNESS     512
 #define SETTINGS_DEFAULT_SEND_INTERVAL  180
@@ -255,6 +260,11 @@ extern int           currentGraphHours; // trenutno prikazano časovno okno (2/4
 // globals.cpp jih NE sme definirati - samo extern deklaracija tukaj
 extern String logBuffer;
 extern bool   loggingInitialized;
+
+// --- Pending WiFi reconnect po spremembi identitete (flag, identičen DEW) ---
+// Postavi ga: http.cpp POST /api/settings ob spremembi unitId
+// Bere ga:    main.cpp loop() — po 500ms kliče WiFi.config + connectWifi()
+extern bool pendingWiFiReconnect;
 
 // --- SD mutex (definiran v globals.cpp) ---
 extern SemaphoreHandle_t sdMutex;

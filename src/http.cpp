@@ -440,6 +440,7 @@ bool setupServer() {
             }
 
             bool changed = false;
+            bool unitIdChanged = false;
 
             if (doc.containsKey("unitId")) {
                 const char* v = doc["unitId"];
@@ -448,7 +449,11 @@ bool setupServer() {
                     settings.unitId[sizeof(settings.unitId) - 1] = '\0';
                     strncpy(sensorData.unitId, v, sizeof(sensorData.unitId) - 1);
                     sensorData.unitId[sizeof(sensorData.unitId) - 1] = '\0';
+                    // Computed IP iz unitId — sewIdToIP() lookup tabela v config.h
+                    strncpy(settings.localIP, sewIdToIP(settings.unitId), sizeof(settings.localIP) - 1);
+                    settings.localIP[sizeof(settings.localIP) - 1] = '\0';
                     changed = true;
+                    unitIdChanged = true;
                 }
             }
             if (doc.containsKey("rewIP")) {
@@ -486,9 +491,24 @@ bool setupServer() {
 
             if (changed) {
                 saveSettings();
-                LOG_INFO("HTTP", "/api/settings updated: id=%s rew=%s sendInt=%d",
-                         settings.unitId, settings.rewIP, settings.sendIntervalSec);
-                request->send(200, "application/json", "{\"status\":\"OK\"}");
+                LOG_INFO("HTTP", "/api/settings updated: id=%s ip=%s rew=%s sendInt=%d",
+                         settings.unitId, settings.localIP, settings.rewIP, settings.sendIntervalSec);
+
+                // DEW pristop: nastavi flag, loop() bo izvedel WiFi reconnect po 500ms.
+                // WiFi.disconnect() se NE sme klicati tukaj (NetworkError).
+                if (unitIdChanged) {
+                    LOG_INFO("HTTP", "Identity changed → pendingWiFiReconnect=true, newIP=%s",
+                             settings.localIP);
+                    pendingWiFiReconnect = true;
+                }
+
+                // Vrni novi IP v odgovor — JS ga uporabi za auto-redirect (identično DEW)
+                StaticJsonDocument<128> resp;
+                resp["status"] = "OK";
+                if (unitIdChanged) resp["newIP"] = settings.localIP;
+                String respStr;
+                serializeJson(resp, respStr);
+                request->send(200, "application/json", respStr);
             } else {
                 request->send(200, "application/json", "{\"status\":\"no_change\"}");
             }

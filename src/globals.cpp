@@ -83,6 +83,11 @@ bool retryAttempted                = false;
 unsigned long lastMainCycleMs  = 0;
 int           currentGraphHours = 4;   // privzeto: 4h okno
 
+// --- Pending WiFi reconnect (DEW pristop) ---
+// Postavi: http.cpp POST /api/settings ob spremembi unitId
+// Bere:    main.cpp loop() — po 500ms kliče WiFi.config + connectWifi()
+bool pendingWiFiReconnect = false;
+
 // --- SD mutex (logging.cpp in sd_card.cpp ga rabita) ---
 SemaphoreHandle_t sdMutex = NULL;
 
@@ -108,15 +113,18 @@ static uint16_t calculateCRC(const uint8_t* data, size_t len) {
 // =============================================================================
 // PRIVZETE VREDNOSTI
 // =============================================================================
+// POZOR: localIP in gateway se NE nastavljata tukaj — sta computed v initGlobals()
+// iz unitId s pomočjo sewIdToIP() in SEW_GATEWAY (config.h).
 static void initDefaults() {
-    strncpy(settings.unitId,  SETTINGS_DEFAULT_UNIT_ID,  sizeof(settings.unitId)  - 1);
-    strncpy(settings.localIP, SETTINGS_DEFAULT_LOCAL_IP, sizeof(settings.localIP) - 1);
-    strncpy(settings.gateway, SETTINGS_DEFAULT_GATEWAY,  sizeof(settings.gateway) - 1);
-    strncpy(settings.rewIP,   SETTINGS_DEFAULT_REW_IP,   sizeof(settings.rewIP)   - 1);
-    settings.unitId[sizeof(settings.unitId)   - 1] = '\0';
-    settings.localIP[sizeof(settings.localIP) - 1] = '\0';
-    settings.gateway[sizeof(settings.gateway) - 1] = '\0';
-    settings.rewIP[sizeof(settings.rewIP)     - 1] = '\0';
+    strncpy(settings.unitId, SETTINGS_DEFAULT_UNIT_ID, sizeof(settings.unitId) - 1);
+    settings.unitId[sizeof(settings.unitId) - 1] = '\0';
+
+    strncpy(settings.rewIP, SETTINGS_DEFAULT_REW_IP, sizeof(settings.rewIP) - 1);
+    settings.rewIP[sizeof(settings.rewIP) - 1] = '\0';
+
+    // localIP in gateway: NE nastavljamo tukaj — initGlobals() jih izračuna
+    settings.localIP[0] = '\0';
+    settings.gateway[0] = '\0';
 
     settings.tempOffset = settings.humOffset = settings.pressOffset = settings.luxOffset = 0.0f;
     settings.screenAlwaysOn   = false;
@@ -127,8 +135,8 @@ static void initDefaults() {
     settings.reserved1 = settings.reserved2 = 0.0f;
     settings.reservedBool1 = false;
 
-    LOG_INFO("Settings", "Defaults: id=%s ip=%s gw=%s rew=%s",
-             settings.unitId, settings.localIP, settings.gateway, settings.rewIP);
+    LOG_INFO("Settings", "Defaults: id=%s rew=%s (IP computed later)",
+             settings.unitId, settings.rewIP);
 }
 
 // =============================================================================
@@ -156,8 +164,9 @@ void loadSettings() {
         LOG_WARN("Settings", "NVS CRC mismatch - defaults");
         initDefaults(); saveSettings(); return;
     }
-    LOG_INFO("Settings", "Loaded: id=%s ip=%s gw=%s rew=%s (CRC=0x%04X)",
-             settings.unitId, settings.localIP, settings.gateway, settings.rewIP, calcCRC);
+    // POZOR: localIP in gateway sta tukaj še prazna — computed v initGlobals() po tem klicu!
+    LOG_INFO("Settings", "Loaded: id=%s rew=%s (CRC=0x%04X) — IP computed after",
+             settings.unitId, settings.rewIP, calcCRC);
 }
 
 void saveSettings() {
@@ -183,6 +192,15 @@ void resetSettings() {
 void initGlobals() {
     // Najprej naloži settings iz NVS
     loadSettings();
+
+    // Izračunaj localIP in gateway iz unitId — NIKOLI se ne berejo iz NVS!
+    // sewIdToIP() vrne fiksni IP za SEW1..SEW5 (tabela v config.h)
+    strncpy(settings.localIP, sewIdToIP(settings.unitId), sizeof(settings.localIP) - 1);
+    settings.localIP[sizeof(settings.localIP) - 1] = '\0';
+    strncpy(settings.gateway, SEW_GATEWAY, sizeof(settings.gateway) - 1);
+    settings.gateway[sizeof(settings.gateway) - 1] = '\0';
+    LOG_INFO("Globals", "Identity: unit=%s localIP=%s gw=%s",
+             settings.unitId, settings.localIP, settings.gateway);
 
     // Počisti sensorData na varno začetno stanje
     memset(&sensorData, 0, sizeof(SensorData));
