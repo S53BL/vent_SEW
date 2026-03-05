@@ -87,6 +87,7 @@ static String navBar() {
            "<a href='http://192.168.2.192/' class='nav-home' title='Domov'>&#127968;</a>"
            "<a href='/'>Status</a>"
            "<a href='/settings'>Nastavitve</a>"
+           "<a href='/graphs'>Grafi</a>"
            "<a href='/sd-list'>SD / Posnetki</a>"
            "<a href='/logs'>Logi</a>"
            "<a href='/motion'>Gibanje</a>"
@@ -510,12 +511,216 @@ void handleSDFile(AsyncWebServerRequest* request) {
 }
 
 // =============================================================================
+// Pomožna funkcija za obdelavo posamezne datoteke
+void processFileForDeletion(const String& fname, const String& todayStr, int& deletedCount, int& skippedCount) {
+    String sanitized = fname;
+    
+    // a. Trim whitespace
+    sanitized.trim();
+    if (sanitized.isEmpty()) return;
+    
+    // b. Sanitiziraj: odstrani ".." in "\\"
+    if (sanitized.indexOf("..") >= 0 || sanitized.indexOf("\\\\") >= 0) {
+        LOG_WARN("WEB", "Pot '%s' vsebuje nedovoljene znake (.. ali \\)", sanitized.c_str());
+        return;
+    }
+    
+    // c. Ime mora se začeti z "/" — če ne, dodaj "/"
+    if (!sanitized.startsWith("/")) {
+        sanitized = "/" + sanitized;
+    }
+    
+    // d. Dovoljeni prefiksi poti: "/log_" ali "/recordings/"
+    if (!sanitized.startsWith("/log_") && !sanitized.startsWith("/recordings/")) {
+        LOG_WARN("WEB", "Nedovoljena datoteka: %s", sanitized.c_str());
+        return;
+    }
+    
+    // e. ZAŠČITA (samo za log datoteke, ne za AVI)
+    if (sanitized.startsWith("/log_")) {
+        // Izvleci datum: med "/log_" in ".txt"
+        int dateStart = 5; // dolžina "/log_"
+        int dateEnd = sanitized.indexOf(".txt");
+        if (dateEnd > dateStart) {
+            String datePart = sanitized.substring(dateStart, dateEnd);
+            if (datePart == todayStr) {
+                LOG_WARN("WEB", "Preskočen današnji log: %s", sanitized.c_str());
+                skippedCount++;
+                return;
+            }
+        }
+    }
+    
+    // f. Brisanje datoteke
+    if (SD.exists(sanitized)) {
+        if (SD.remove(sanitized)) {
+            LOG_INFO("WEB", "Izbrisana datoteka: %s", sanitized.c_str());
+            deletedCount++;
+        } else {
+            LOG_WARN("WEB", "Brisanje datoteke ni uspelo: %s", sanitized.c_str());
+        }
+    } else {
+        LOG_WARN("WEB", "Datoteka ne obstaja: %s", sanitized.c_str());
+    }
+}
+
+// =============================================================================
+// GET /api/graph-data?date=YYYY-MM-DD — stream CSV za grafe
+// =============================================================================
+void handleGraphData(AsyncWebServerRequest* request) {
+    String date;
+    if (request->hasParam("date")) {
+        date = request->getParam("date")->value();
+        if (date.length() != 10 || date.indexOf("..") >= 0) {
+            request->send(400, "text/plain", "Invalid date");
+            return;
+        }
+    } else {
+        date = (timeSynced && myTZ.now() > 1577836800UL)
+               ? myTZ.dateTime("Y-m-d") : "nodate";
+    }
+    String fn = "/sew_" + date + ".csv";
+    LOG_INFO("WEB", "GET /api/graph-data date=%s", date.c_str());
+    if (!SD.exists(fn.c_str())) {
+        request->send(404, "text/plain", "No data: " + fn);
+        return;
+    }
+    request->send(SD, fn.c_str(), "text/csv");
+}
+
+// =============================================================================
+// GET /graphs — grafi temperature, vlage, pritiska, IAQ, Lux, gibanja
+// =============================================================================
+void handleGraphs(AsyncWebServerRequest* request) {
+    LOG_INFO("WEB", "GET /graphs");
+    String today = (timeSynced && myTZ.now() > 1577836800UL)
+                   ? myTZ.dateTime("Y-m-d") : "";
+
+    String html = "<!DOCTYPE html><html><head>"
+                  "<meta charset='UTF-8'>"
+                  "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                  "<title>SEW Grafi</title>";
+    html += CSS;
+    html += R"GCSS(<style>
+.gc{display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+    padding:10px 16px;background:#161616;border-bottom:1px solid #1e1e1e;}
+.gc label{color:#666;font-size:12px;}
+.gb{background:#1a1a2e;color:#888;border:1px solid #2a2a2a;
+    padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;}
+.gb.on,.gb:hover{background:#1565c0;color:#fff;border-color:#1565c0;}
+.gblock{padding:10px 16px 0;}
+.ghdr{color:#777;font-size:12px;margin-bottom:3px;
+      display:flex;justify-content:space-between;align-items:baseline;}
+.gval{color:#fff;font-size:14px;font-weight:bold;}
+.gwrap{position:relative;height:200px;}
+#gst{padding:5px 16px;font-size:11px;color:#555;background:#111;
+     border-bottom:1px solid #181818;min-height:22px;}
+@media (max-width: 600px) {
+    .gwrap { height: 140px; }
+    .gc    { gap: 8px; }
+    .gb    { padding: 6px 12px; font-size: 13px; }
+    .ghdr  { font-size: 13px; }
+    .gval  { font-size: 13px; }
+}
+</style>)GCSS";
+
+    html += "<script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js'></script>";
+    html += "<script src='https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js'></script>";
+    html += "<script src='https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js'></script>";
+    html += "<script src='https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js'></script>";
+    html += "<script src='https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js'></script>";
+    html += "</head><body>";
+    html += navBar();
+    html += "<h1>SEW \xe2\x80\x94 Grafi</h1>";
+
+    // Kontrole — date input (default = danes)
+    html += "<div class='gc'><label>Datum:</label>";
+    html += "<input type='date' id='ds' value='" + today + "' onchange='loadD(this.value)'"
+            " style='font-size:13px;padding:4px 8px;background:#222;color:#ddd;"
+            "border:1px solid #444;border-radius:4px;'>";
+    html += "<span style='color:#2a2a2a;'>|</span>";
+    html += "<button class='gb' id='r1' onclick='setR(1,\"r1\")'>1h</button>";
+    html += "<button class='gb' id='r6' onclick='setR(6,\"r6\")'>6h</button>";
+    html += "<button class='gb' id='r24' onclick='setR(24,\"r24\")'>24h</button>";
+    html += "<button class='gb on' id='rA' onclick='setR(0,\"rA\")'>Vse</button>";
+    html += "<button class='gb' style='margin-left:auto;' onclick='rZ()'>&#8635; Reset zoom</button></div>";
+    html += "<div id='gst'>Nalagam&#8230;</div>";
+
+    // Canvas bloki — 6 grafov
+    html += "<div class='gblock'><div class='ghdr'><span>&#127777; Temperatura</span>"
+            "<span class='gval' id='vT'></span></div>"
+            "<div class='gwrap'><canvas id='cT'></canvas></div></div>";
+    html += "<div class='gblock' style='margin-top:6px;'><div class='ghdr'><span>&#128167; Vlaga</span>"
+            "<span class='gval' id='vH'></span></div>"
+            "<div class='gwrap'><canvas id='cH'></canvas></div></div>";
+    html += "<div class='gblock' style='margin-top:6px;'><div class='ghdr'><span>&#128309; Pritisk</span>"
+            "<span class='gval' id='vP'></span></div>"
+            "<div class='gwrap'><canvas id='cP'></canvas></div></div>";
+    html += "<div class='gblock' style='margin-top:6px;'><div class='ghdr'><span>&#128682; IAQ</span>"
+            "<span class='gval' id='vI'></span></div>"
+            "<div class='gwrap'><canvas id='cI'></canvas></div></div>";
+    html += "<div class='gblock' style='margin-top:6px;'><div class='ghdr'><span>&#128161; Lux</span>"
+            "<span class='gval' id='vL'></span></div>"
+            "<div class='gwrap'><canvas id='cL'></canvas></div></div>";
+    html += "<div class='gblock' style='margin-top:6px;'><div class='ghdr'><span>&#128694; Gibanje</span>"
+            "<span class='gval' id='vMC'></span></div>"
+            "<div class='gwrap'><canvas id='cM'></canvas></div></div>";
+
+    html += R"GJS(<script>
+var ch={},raw=[],rng=0,syn=false;
+function oz(c){if(syn)return;syn=true;var mn=c.chart.scales.x.min,mx=c.chart.scales.x.max;['T','H','P','I','L','M'].forEach(function(k){if(ch[k]&&ch[k]!==c.chart)ch[k].zoomScale('x',{min:mn,max:mx},'none');});syn=false;}
+var ZP={zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x',onZoom:oz,onZoomComplete:oz},pan:{enabled:true,mode:'x',onPan:oz,onPanComplete:oz}};
+function xsc(){return{type:'time',time:{tooltipFormat:'HH:mm:ss',displayFormats:{second:'HH:mm:ss',minute:'HH:mm',hour:'HH:mm',day:'d.M.'}},ticks:{color:'#555',maxTicksLimit:8},grid:{color:'#1e1e1e'}};}
+function mkLine(id,col,unit,mn,mx){
+  var ctx=document.getElementById(id);
+  var ys={ticks:{color:'#555',callback:function(v){return v.toFixed(1)+unit;}},grid:{color:'#1e1e1e'}};
+  if(mn!=null)ys.min=mn; if(mx!=null)ys.max=mx;
+  return new Chart(ctx,{type:'line',data:{datasets:[{data:[],borderColor:col,backgroundColor:col+'18',borderWidth:1.5,pointRadius:0,fill:true,tension:0.2}]},options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#1e1e1e',borderColor:'#333',borderWidth:1,titleColor:'#aaa',bodyColor:'#fff',callbacks:{label:function(c){return c.parsed.y.toFixed(1)+unit;}}},zoom:ZP},scales:{x:xsc(),y:ys}}});
+}
+function iCh(){['T','H','P','I','L','M'].forEach(function(k){if(ch[k]){ch[k].destroy();}});ch={};ch.T=mkLine('cT','#ff9800','\u00b0C',null,null);ch.H=mkLine('cH','#4da6ff','%',0,100);ch.P=mkLine('cP','#ce93d8',' hPa',null,null);ch.I=mkLine('cI','#ef5350','',0,500);ch.L=mkLine('cL','#ffee58',' lx',0,null);ch.M=mkLine('cM','#66bb6a','',0,null);}
+function rZ(){Object.keys(ch).forEach(function(k){if(ch[k])ch[k].resetZoom();});}
+function setR(h,id){rng=h;['r1','r6','r24','rA'].forEach(function(i){var e=document.getElementById(i);if(e)e.className='gb'+(i===id?' on':'');});applyD(raw);}
+function filt(d,h){if(!h||!d.length)return d;var mx=+d[d.length-1].timestamp;return d.filter(function(r){return +r.timestamp>=mx-h*3600;});}
+function applyD(data){
+  var d=filt(data,rng),sb=document.getElementById('gst');
+  if(!d||!d.length){sb.textContent='Ni podatkov za izbrano obdobje.';return;}
+  var tP=[],hP=[],pP=[],iP=[],lP=[],mP=[];
+  d.forEach(function(r){var t=new Date(+r.timestamp*1000);tP.push({x:t,y:parseFloat(r.temp)||0});hP.push({x:t,y:parseFloat(r.hum)||0});pP.push({x:t,y:parseFloat(r.press)||0});iP.push({x:t,y:parseFloat(r.iaq)||0});lP.push({x:t,y:parseFloat(r.lux)||0});mP.push({x:t,y:parseFloat(r.motion_count)||0});});
+  ch.T.data.datasets[0].data=tP;ch.H.data.datasets[0].data=hP;ch.P.data.datasets[0].data=pP;ch.I.data.datasets[0].data=iP;ch.L.data.datasets[0].data=lP;ch.M.data.datasets[0].data=mP;
+  ch.T.update('none');ch.H.update('none');ch.P.update('none');ch.I.update('none');ch.L.update('none');ch.M.update('none');
+  var l=d[d.length-1],f=d[0];
+  document.getElementById('vT').textContent=parseFloat(l.temp).toFixed(1)+' \u00b0C';
+  document.getElementById('vH').textContent=parseFloat(l.hum).toFixed(1)+' %';
+  document.getElementById('vP').textContent=parseFloat(l.press).toFixed(1)+' hPa';
+  document.getElementById('vI').textContent=parseFloat(l.iaq).toFixed(0);
+  document.getElementById('vL').textContent=parseFloat(l.lux).toFixed(0)+' lx';
+  document.getElementById('vMC').textContent=parseFloat(l.motion_count).toFixed(0);
+  var dur=Math.round((+l.timestamp-+f.timestamp)/60);
+  sb.textContent=d.length+' meritev | '+new Date(+f.timestamp*1000).toLocaleTimeString('sl-SI')+' \u2013 '+new Date(+l.timestamp*1000).toLocaleTimeString('sl-SI')+' ('+dur+' min)'+(d.length<data.length?' | skupaj: '+data.length:'');
+  rZ();
+}
+function loadD(date){
+  if(!date)return;
+  var sb=document.getElementById('gst'); sb.textContent='Nalagam '+date+' \u2026';
+  fetch('/api/graph-data?date='+encodeURIComponent(date))
+  .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();})
+  .then(function(csv){Papa.parse(csv,{header:true,skipEmptyLines:true,complete:function(res){raw=res.data.filter(function(r){return r.timestamp&&r.timestamp!=='timestamp'&&!isNaN(+r.timestamp);});if(!raw.length){sb.textContent='Prazna datoteka.';return;}applyD(raw);},error:function(e){sb.textContent='CSV napaka: '+e.message;}});})
+  .catch(function(e){sb.textContent='Napaka: '+e.message;});
+}
+window.addEventListener('load',function(){iCh();var d=document.getElementById('ds').value;if(d)loadD(d);else document.getElementById('gst').textContent='Ni razpoložljivega datuma - preverite NTP sinhronizacijo.';});
+</script>)GJS";
+
+    html += "</body></html>";
+    request->send(200, "text/html; charset=utf-8", html);
+}
+
+// =============================================================================
 // GET /logs — RAM log buffer
 // =============================================================================
 void handleLogs(AsyncWebServerRequest* request) {
     LOG_INFO("WEB", "GET /logs");
 
-    extern String logBuffer;   // iz logging.cpp (veljavna extern deklaracija v funkciji)
+    extern String logBuffer;   // iz logging.cpp
 
     String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
                   "<title>SEW Logi</title>";
@@ -929,58 +1134,4 @@ void handleMotion(AsyncWebServerRequest* request) {
 
     html += "</div></body></html>";
     request->send(200, "text/html; charset=utf-8", html);
-}
-
-// =============================================================================
-// Pomožna funkcija za obdelavo posamezne datoteke
-void processFileForDeletion(const String& fname, const String& todayStr, int& deletedCount, int& skippedCount) {
-    String sanitized = fname;
-    
-    // a. Trim whitespace
-    sanitized.trim();
-    if (sanitized.isEmpty()) return;
-    
-    // b. Sanitiziraj: odstrani ".." in "\\"
-    if (sanitized.indexOf("..") >= 0 || sanitized.indexOf("\\\\") >= 0) {
-        LOG_WARN("WEB", "Pot '%s' vsebuje nedovoljene znake (.. ali \\\\)", sanitized.c_str());
-        return;
-    }
-    
-    // c. Ime mora se začeti z "/" — če ne, dodaj "/"
-    if (!sanitized.startsWith("/")) {
-        sanitized = "/" + sanitized;
-    }
-    
-    // d. Dovoljeni prefiksi poti: "/log_" ali "/recordings/"
-    if (!sanitized.startsWith("/log_") && !sanitized.startsWith("/recordings/")) {
-        LOG_WARN("WEB", "Nedovoljena datoteka: %s", sanitized.c_str());
-        return;
-    }
-    
-    // e. ZAŠČITA (samo za log datoteke, ne za AVI)
-    if (sanitized.startsWith("/log_")) {
-        // Izvleci datum: med "/log_" in ".txt"
-        int dateStart = 5; // dolžina "/log_"
-        int dateEnd = sanitized.indexOf(".txt");
-        if (dateEnd > dateStart) {
-            String datePart = sanitized.substring(dateStart, dateEnd);
-            if (datePart == todayStr) {
-                LOG_WARN("WEB", "Preskočen današnji log: %s", sanitized.c_str());
-                skippedCount++;
-                return;
-            }
-        }
-    }
-    
-    // f. Brisanje datoteke
-    if (SD.exists(sanitized)) {
-        if (SD.remove(sanitized)) {
-            LOG_INFO("WEB", "Izbrisana datoteka: %s", sanitized.c_str());
-            deletedCount++;
-        } else {
-            LOG_WARN("WEB", "Brisanje datoteke ni uspelo: %s", sanitized.c_str());
-        }
-    } else {
-        LOG_WARN("WEB", "Datoteka ne obstaja: %s", sanitized.c_str());
-    }
 }

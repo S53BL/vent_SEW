@@ -46,9 +46,11 @@ void setupWebEndpoints() {
     server.on("/sd-file",  HTTP_GET, handleSDFile);
     server.on("/logs",     HTTP_GET, handleLogs);
     server.on("/motion",   HTTP_GET, handleMotion);
+    server.on("/graphs",   HTTP_GET, handleGraphs);
     server.on("/api/delete-files", HTTP_POST, handleDeleteFiles);
+    server.on("/api/graph-data",   HTTP_GET,  handleGraphData);
 
     // /api/ping in /api/reset sta registrirani v http.cpp setupServer() - ne podvajamo!
 
-    LOG_INFO("WEB", "Web UI endpoints registered: /, /settings, /sd-list, /sd-file, /logs, /motion, /api/delete-files");
+    LOG_INFO("WEB", "Web UI endpoints registered: /, /settings, /sd-list, /sd-file, /logs, /motion, /graphs, /api/delete-files, /api/graph-data");
 }
