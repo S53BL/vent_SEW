@@ -268,7 +268,7 @@ inline const char* sewIdToIP(const char* unitId) {
 #define SENSOR_READ_INTERVAL    30000UL   // DEPRECATED
 
 #define WIFI_CHECK_INTERVAL    600000UL   // Preverjanje WiFi: 10 min
-#define SCREEN_TIMEOUT          60000UL   // Izklop zaslona po 60 s
+#define SCREEN_TIMEOUT_MS  (10UL * 60UL * 1000UL)   // Samodejni izklop zaslona po 10 minutah
 #define MOTION_DEBOUNCE           500UL   // PIR debounce: 500 ms
 #define NTP_UPDATE_INTERVAL   1800000UL   // NTP sinhronizacija: 30 min
 

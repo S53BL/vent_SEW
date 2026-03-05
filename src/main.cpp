@@ -176,6 +176,7 @@ void setup() {
 
     // 6. Zaslon
     initDisplay();
+    lastTouchMs = millis();  // zaslon sveti prvih 10 minut po zagonu
     LOG_INFO("MAIN", "Display OK");
 
     // 7. Senzorji
@@ -384,6 +385,9 @@ void loop() {
 
     // Kamera: podaljšanje snemanja ob gibanju
     performMotionRecordingCheck();
+
+    // Stanje zaslona: vklop/izklop glede na PIR + touch + timeout
+    updateScreenState();
 
     // LVGL / zaslon posodobitev (touch, animacije, draw)
     updateUI();

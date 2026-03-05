@@ -357,6 +357,7 @@ static void graphTouchHandler(lv_event_t* e) {
     if (code == LV_EVENT_PRESSED) {
         lv_indev_get_point(lv_indev_get_act(), &touchStart);
         touchStartMs = millis();
+        lastTouchMs  = millis();   // prebudi zaslon ob dotiku grafa
         return;
     }
 

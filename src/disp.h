@@ -26,5 +26,6 @@
 
 void initDisplay();
 void updateUI();
+void updateScreenState();
 void showDetailScreen();
 void hideDetailScreen();

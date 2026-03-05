@@ -187,8 +187,8 @@ void initDisplay() {
     LOG_INFO("DISP", "Main screen initialized");
 }
 
-static void top_touch_cb(lv_event_t* e)   { (void)e; showDetailScreen(); }
-static void detail_touch_cb(lv_event_t* e){ (void)e; hideDetailScreen(); }
+static void top_touch_cb(lv_event_t* e)   { (void)e; lastTouchMs = millis(); showDetailScreen(); }
+static void detail_touch_cb(lv_event_t* e){ (void)e; lastTouchMs = millis(); hideDetailScreen(); }
 static void detail_timer_cb(lv_timer_t* t){ (void)t; hideDetailScreen(); }
 
 void showDetailScreen() {
@@ -381,6 +381,25 @@ void hideDetailScreen() {
             lv_timer_del(t);
         }, 250, NULL);
         lv_timer_set_repeat_count(del_t, 1);
+    }
+}
+
+void updateScreenState() {
+    if (settings.screenAlwaysOn) {
+        if (!screenOn) {
+            Set_Backlight(settings.screenBrightness * 100 / 1023);
+            screenOn = true;
+        }
+        return;
+    }
+    unsigned long lastActivity = max((unsigned long)lastMotionMs, lastTouchMs);
+    bool shouldBeOn = (millis() - lastActivity < SCREEN_TIMEOUT_MS);
+    if (shouldBeOn && !screenOn) {
+        Set_Backlight(settings.screenBrightness * 100 / 1023);
+        screenOn = true;
+    } else if (!shouldBeOn && screenOn) {
+        Set_Backlight(0);
+        screenOn = false;
     }
 }
 
