@@ -50,3 +50,6 @@ bool fetchWeatherNow();         // Takojšnje branje (vrne true = uspeh)
 // Pomožne za UI
 const char* weatherCodeToStr(int code);   // "Jasno", "Megleno" ...
 const char* weatherCodeToIcon(int code);  // Simbol za zaslon
+
+#include "lvgl.h"
+const lv_img_dsc_t* weatherCodeToImage(int code);

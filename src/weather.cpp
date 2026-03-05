@@ -11,6 +11,7 @@
 //   - FIX: http.end() pred deserializeJson (sprosti TCP socket pomnilnik pred parsanjem).
 //
 #include "weather.h"
+#include "icons.h"
 #include "globals.h"
 #include "logging.h"
 #include <HTTPClient.h>
@@ -199,4 +200,23 @@ const char* weatherCodeToIcon(int code) {
     if (code == 95)                return "STRM";
     if (code >= 96 && code <= 99)  return "HAIL";
     return "?";
+}
+
+const lv_img_dsc_t* weatherCodeToImage(int code) {
+    if (code == 0)                 return &SUN;
+    if (code == 1)                 return &pSUN;
+    if (code == 2)                 return &pCLD;
+    if (code == 3)                 return &CLD;
+    if (code == 45 || code == 48)  return &FOG;
+    if (code >= 51 && code <= 55)  return &DZL;
+    if (code >= 56 && code <= 57)  return &iDZL;
+    if (code >= 61 && code <= 65)  return &RAIN;
+    if (code >= 66 && code <= 67)  return &iRAIN;
+    if (code >= 71 && code <= 75)  return &SNOW;
+    if (code == 77)                return &SLEET;
+    if (code >= 80 && code <= 82)  return &SHWR;
+    if (code >= 85 && code <= 86)  return &SSHW;
+    if (code == 95)                return &STRM;
+    if (code >= 96 && code <= 99)  return &HAIL;
+    return &NA;
 }

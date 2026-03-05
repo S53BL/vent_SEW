@@ -17,6 +17,7 @@
 #include "disp_graph.h"
 #include "globals.h"
 #include "weather.h"
+#include "icons.h"
 #include "logging.h"
 #include "colours.h"
 #include "config.h"
@@ -40,7 +41,7 @@ static lv_obj_t* lbl_iaq     = nullptr;
 static lv_obj_t* lbl_press   = nullptr;
 static lv_obj_t* lbl_lux     = nullptr;
 static lv_obj_t* lbl_pir     = nullptr;
-static lv_obj_t* lbl_weather = nullptr;
+static lv_obj_t* img_weather = nullptr;
 
 static void top_touch_cb(lv_event_t* e);
 static void detail_touch_cb(lv_event_t* e);
@@ -100,17 +101,16 @@ void initDisplay() {
 
     // WiFi ikona (desno zgoraj)
     lbl_wifi = lv_label_create(top_panel);
-    lv_obj_set_pos(lbl_wifi, SCR_W - 40, 8);
+    lv_obj_set_pos(lbl_wifi, SCR_W - 38, 8);
     lv_obj_set_style_text_font(lbl_wifi, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_wifi, lv_color_hex(0xCCCCCC), 0);
     lv_label_set_text(lbl_wifi, LV_SYMBOL_WIFI);
 
-    // Vremenski simbol
-    lbl_weather = lv_label_create(top_panel);
-    lv_obj_set_pos(lbl_weather, SCR_W - 60, 38); // poravnano z datumom
-    lv_obj_set_style_text_font(lbl_weather, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_weather, lv_color_hex(COL_TEXT_SECONDARY), 0);
-    lv_label_set_text(lbl_weather, "...");
+    // Vremenska ikona 30x30px (levo od WiFi)
+    img_weather = lv_img_create(top_panel);
+    lv_obj_set_pos(img_weather, SCR_W - 75, 3);
+    lv_obj_set_size(img_weather, 30, 30);
+    lv_img_set_src(img_weather, &NA);
 
     // Locilna linija
     lv_obj_t* line1 = lv_obj_create(top_panel);
@@ -410,7 +410,7 @@ void updateUI() {
     lv_obj_set_style_text_color(lbl_wifi, wifiColor(rssi, conn), 0);
 
     if (weatherData.valid) {
-        lv_label_set_text(lbl_weather, weatherCodeToIcon(weatherData.weatherCode));
+        lv_img_set_src(img_weather, weatherCodeToImage(weatherData.weatherCode));
     }
 
     const SensorData& sd = sensorData;
