@@ -276,11 +276,11 @@ bool uploadToWeathercloud() {
         "&ver=1.5&type=201",
         settings.wcWid,
         settings.wcKey,
-    (int)(sensorData.temp  * 10.0f),
+        (int)(sensorData.temp  * 10.0f),
         (int)(sensorData.hum),
-    (int)(sensorData.press * 10.0f),
-    (int)(dew              * 10.0f),
-    (int)(sr               * 10.0f)
+        (int)(sensorData.press * 10.0f),
+        (int)(dew              * 10.0f),
+        (int)(sr               * 10.0f)
     );
 
     HTTPClient http;

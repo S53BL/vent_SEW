@@ -67,7 +67,7 @@ input,select{background:#1e1e1e;color:#ddd;border:1px solid #444;
          padding:10px;font-family:monospace;font-size:11px;
          max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
 .log-INFO{color:#66bb6a}.log-WARN{color:#ffa726}
-.log-ERROR{color:#ef5350}.log-DEBUG{color:#666}
+.log-ERROR{color:#ef5350}.log-DEBUG{color:#617edb}
 .file-link{color:#4da6ff;text-decoration:none}
 .file-link:hover{text-decoration:underline}
 .tag-rec{background:#b71c1c;color:#fff;padding:1px 6px;

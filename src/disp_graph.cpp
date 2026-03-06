@@ -79,13 +79,13 @@
 // BARVNA SHEMA (strogo dark)
 // Vse barve so zbrane tukaj — enostavno prilagajanje teme.
 // -----------------------------------------------------------------------
-#define COL_HEADER_BG    0x1C1C30  // 0x1C1C30 header cona — temno modro-vijolična
+#define COL_HEADER_BG    0x32243d  // 0x1C1C30 header cona — temno modro-vijolična
 #define COL_CHART_BG     0x0A0A18  // 0x0A0A18 chart cona  — skoraj črna z modrim tonom
 #define COL_CONT_BG      0x141422  // 0x141422 container bg — vmesni ton (viden le kot rob)
 #define COL_CONT_BORDER  0x333355  // 0x333355 rob in separator — moder odtenek
-#define COL_AXIS_TEXT    0xFFF299  // 0x9090B0 tekst X osi in min/max — dim blue-grey
+#define COL_AXIS_TEXT    0xDAFF99  // 0x9090B0 tekst X osi in min/max — dim blue-grey
 #define COL_GRID_LINE    0x1E1E38  // 0x1E1E38 mrežne linije znotraj charta — komaj vidne
-#define COL_AXIS_Y_TEXT  0xFFF299  // 0x9090B0 tekst Y osi — enako kot X osi
+#define COL_AXIS_Y_TEXT  0xDAFF99  // 0x9090B0 tekst Y osi — enako kot X osi
 
 // -----------------------------------------------------------------------
 // Minimalni razponi Y osi (preprečuje "drama" pri nizkih variacijah)
@@ -206,9 +206,9 @@ lv_color_t graphSensorColor(int idx) {
         case GRAPH_TEMP:  return lv_color_hex(0xFF6B6B);   // 0xFF6B6B topla rdeča
         case GRAPH_HUM:   return lv_color_hex(0x4DA6FF);   // 0x4DA6FF modra
         case GRAPH_IAQ:   return lv_color_hex(0xFFD700);   // 0xFFD700 zlata
-        case GRAPH_LUX:   return lv_color_hex(0xFFF176);   // 0xFFF176 rumena
-        case GRAPH_WIND:  return lv_color_hex(0x80CBC4);   // 0x80CBC4 teal
-        case GRAPH_CLOUD: return lv_color_hex(0xB0BEC5);   // 0xB0BEC5 siva
+        case GRAPH_LUX:   return lv_color_hex(0xFCEFCA);   // 0xFFF176 rumena
+        case GRAPH_WIND:  return lv_color_hex(0x81D0D0);   // 0x80CBC4 teal
+        case GRAPH_CLOUD: return lv_color_hex(0xE0DCDE);   // 0xB0BEC5 siva
         default:          return lv_color_hex(0xFFFFFF);
     }
 }
