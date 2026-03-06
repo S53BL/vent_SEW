@@ -236,6 +236,27 @@ void handleRoot(AsyncWebServerRequest* request) {
     html += "</td></tr>";
     html += "</table>";
 
+    html += "<h2>Cloud uploads</h2><table>";
+    html += "<tr><th>Weathercloud</th><td>";
+    if (settings.wcIntervalMin == 0 || strlen(settings.wcWid) == 0) {
+        html += "<span class='dim'>onemogočeno</span>";
+    } else {
+        bool isOk = wcLastStatus.startsWith("OK");
+        html += "<span class='" + String(isOk ? "ok" : "err") + "'>" + wcLastStatus + "</span>";
+        html += " <small style='color:#555'>(" + String(settings.wcIntervalMin) + " min)</small>";
+    }
+    html += "</td></tr>";
+    html += "<tr><th>Weather Underground</th><td>";
+    if (settings.wuIntervalMin == 0 || strlen(settings.wuStationID) == 0) {
+        html += "<span class='dim'>onemogočeno</span>";
+    } else {
+        bool isOk = wuLastStatus.startsWith("OK");
+        html += "<span class='" + String(isOk ? "ok" : "err") + "'>" + wuLastStatus + "</span>";
+        html += " <small style='color:#555'>(" + String(settings.wuIntervalMin) + " min)</small>";
+    }
+    html += "</td></tr>";
+    html += "</table>";
+
     html += "</div></body></html>";
     request->send(200, "text/html; charset=utf-8", html);
 }
@@ -282,7 +303,13 @@ function save() {
         readInterval:     parseInt(document.getElementById('readInterval').value),
         screenBrightness: parseInt(document.getElementById('brightness').value),
         screenAlwaysOn:   document.getElementById('screenAlwaysOn').checked,
-        videoKeepDays:    parseInt(document.getElementById('videoKeepDays').value)
+        videoKeepDays:    parseInt(document.getElementById('videoKeepDays').value),
+        wcWid:            document.getElementById('wcWid').value,
+        wcKey:            document.getElementById('wcKey').value,
+        wcIntervalMin:    parseInt(document.getElementById('wcIntervalMin').value),
+        wuStationID:      document.getElementById('wuStationID').value,
+        wuPassword:       document.getElementById('wuPassword').value,
+        wuIntervalMin:    parseInt(document.getElementById('wuIntervalMin').value)
     };
     fetch('/api/settings',{method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -375,6 +402,20 @@ function resetDev() {
 
     html += "<h2>Video posnetki</h2><table>";
     html += "<tr><th>Hranjenje posnetkov [dni]</th><td><input id='videoKeepDays' type='number' min='1' max='30' value='" + String(settings.videoKeepDays) + "'></td></tr>";
+    html += "</table>";
+
+    html += "<h2>Cloud uploads</h2>";
+
+    html += "<h3 style='color:#aaa;font-size:13px;margin:10px 18px 5px 18px'>Weathercloud</h3><table>";
+    html += "<tr><th>Device ID (wid)</th><td><input id='wcWid' value='" + String(settings.wcWid) + "' maxlength='23' placeholder='npr. 1234567890'></td></tr>";
+    html += "<tr><th>Key</th><td><input id='wcKey' value='" + String(settings.wcKey) + "' maxlength='35' placeholder='API Key'></td></tr>";
+    html += "<tr><th>Interval [min]<br><small style='color:#666'>0=off, min 10 za brezplačne</small></th><td><input id='wcIntervalMin' type='number' min='0' max='60' value='" + String(settings.wcIntervalMin) + "'></td></tr>";
+    html += "</table>";
+
+    html += "<h3 style='color:#aaa;font-size:13px;margin:10px 18px 5px 18px'>Weather Underground</h3><table>";
+    html += "<tr><th>Station ID</th><td><input id='wuStationID' value='" + String(settings.wuStationID) + "' maxlength='15' placeholder='npr. IXXXXX1'></td></tr>";
+    html += "<tr><th>API Key (Password)</th><td><input id='wuPassword' value='" + String(settings.wuPassword) + "' maxlength='35' placeholder='Device API Key'></td></tr>";
+    html += "<tr><th>Interval [min]<br><small style='color:#666'>0=onemogočeno</small></th><td><input id='wuIntervalMin' type='number' min='0' max='60' value='" + String(settings.wuIntervalMin) + "'></td></tr>";
     html += "</table>";
 
     html += "<button class='btn btn-blue' onclick='save()'>Shrani</button>&nbsp;";

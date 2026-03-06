@@ -228,9 +228,6 @@ void setup() {
 
     LOG_INFO("MAIN", "=== Boot complete === ID:%s IP:%s ===",
              settings.unitId, WiFi.localIP().toString().c_str());
-
-    // Initial log flush po boot-u (da vidimo startup loge na SD)
-    if (sdPresent) flushBufferToSD();
 }
 
 // ============================================================
@@ -324,6 +321,24 @@ void loop() {
 
         // Weather update (non-blocking, interno preverja 15-min interval)
         updateWeather();
+
+        // ── Weathercloud timer ────────────────────────────────────────────────────
+        if (settings.wcIntervalMin > 0) {
+            unsigned long wcInterval = (unsigned long)settings.wcIntervalMin * 60000UL;
+            if (millis() - lastWcUploadMs >= wcInterval) {
+                lastWcUploadMs = millis();
+                uploadToWeathercloud();
+            }
+        }
+
+        // ── Weather Underground timer ─────────────────────────────────────────────
+        if (settings.wuIntervalMin > 0) {
+            unsigned long wuInterval = (unsigned long)settings.wuIntervalMin * 60000UL;
+            if (millis() - lastWuUploadMs >= wuInterval) {
+                lastWuUploadMs = millis();
+                uploadToWeatherUnderground();
+            }
+        }
 
         // Shrani GraphPoint v ring buffer (RAM + LittleFS)
         // Samo če imamo veljavno temperaturo (SHT41 mora biti prisoten)

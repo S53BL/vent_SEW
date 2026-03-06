@@ -15,6 +15,7 @@
 #include "globals.h"
 #include "logging.h"
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <time.h>
@@ -219,4 +220,159 @@ const lv_img_dsc_t* weatherCodeToImage(int code) {
     if (code == 95)                return &STRM;
     if (code >= 96 && code <= 99)  return &HAIL;
     return &NA;
+}
+
+// =============================================================================
+// CLOUD UPLOADS - pomocne funkcije
+// =============================================================================
+
+static String _getCloudTimestamp() {
+    if (!timeSynced) return "?";
+    return myTZ.dateTime("Y-m-d H:i");
+}
+
+float calcDewPoint(float T, float RH) {
+    return T - ((100.0f - RH) / 5.0f);
+}
+
+float calcSolarRad(float lux) {
+    return lux * 0.0079f;
+}
+
+// =============================================================================
+// WEATHERCLOUD UPLOAD
+// =============================================================================
+
+bool uploadToWeathercloud() {
+    if (settings.wcIntervalMin == 0 ||
+        strlen(settings.wcWid) == 0 ||
+        strlen(settings.wcKey) == 0) {
+        wcLastStatus = "disabled";
+        return false;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        wcLastStatus = "ERR WiFi";
+        LOG_WARN("WC", "Skipped - WiFi not connected");
+        return false;
+    }
+
+    if (sensorData.temp  <= ERR_FLOAT + 1.0f ||
+        sensorData.hum   <= ERR_FLOAT + 1.0f ||
+        sensorData.press <= ERR_FLOAT + 1.0f) {
+        wcLastStatus = "ERR no data";
+        LOG_WARN("WC", "Skipped - sensor data invalid");
+        return false;
+    }
+
+    float dew = calcDewPoint(sensorData.temp, sensorData.hum);
+    float sr  = calcSolarRad(sensorData.lux > ERR_FLOAT + 1.0f ? sensorData.lux : 0.0f);
+
+    char url[512];
+    snprintf(url, sizeof(url),
+        "http://api.weathercloud.net/v01/set"
+        "?wid=%s&key=%s"
+        "&temp=%.1f&hum=%d&bar=%.1f&dew=%.1f&solarrad=%.1f"
+        "&ver=1.5&type=201",
+        settings.wcWid,
+        settings.wcKey,
+        sensorData.temp,
+        (int)(sensorData.hum),
+        sensorData.press,
+        dew,
+        sr
+    );
+
+    HTTPClient http;
+    http.setTimeout(10000);
+    http.setConnectTimeout(5000);
+    http.begin(url);
+    int httpCode = http.GET();
+    http.end();
+
+    if (httpCode == 200) {
+        wcLastStatus = "OK " + _getCloudTimestamp();
+        LOG_INFO("WC", "Upload OK: temp=%.1f hum=%d bar=%.1f dew=%.1f solarrad=%.1f",
+                 sensorData.temp, (int)sensorData.hum,
+                 sensorData.press, dew, sr);
+        return true;
+    } else {
+        wcLastStatus = "ERR " + String(httpCode);
+        LOG_WARN("WC", "Upload FAILED: HTTP %d", httpCode);
+        return false;
+    }
+}
+
+// =============================================================================
+// WEATHER UNDERGROUND UPLOAD
+// =============================================================================
+
+bool uploadToWeatherUnderground() {
+    if (settings.wuIntervalMin == 0 ||
+        strlen(settings.wuStationID) == 0 ||
+        strlen(settings.wuPassword)  == 0) {
+        wuLastStatus = "disabled";
+        return false;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        wuLastStatus = "ERR WiFi";
+        LOG_WARN("WU", "Skipped - WiFi not connected");
+        return false;
+    }
+
+    if (sensorData.temp  <= ERR_FLOAT + 1.0f ||
+        sensorData.hum   <= ERR_FLOAT + 1.0f ||
+        sensorData.press <= ERR_FLOAT + 1.0f) {
+        wuLastStatus = "ERR no data";
+        LOG_WARN("WU", "Skipped - sensor data invalid");
+        return false;
+    }
+
+    float dew   = calcDewPoint(sensorData.temp, sensorData.hum);
+    float sr    = calcSolarRad(sensorData.lux > ERR_FLOAT + 1.0f ? sensorData.lux : 0.0f);
+    float tempF = sensorData.temp  * 1.8f + 32.0f;
+    float dewF  = dew              * 1.8f + 32.0f;
+    float baro  = sensorData.press * 0.02953f;
+
+    char url[512];
+    snprintf(url, sizeof(url),
+        "https://rtupdate.wunderground.com/weatherstation/updateweatherstation.php"
+        "?ID=%s&PASSWORD=%s"
+        "&dateutc=now&action=updateraw"
+        "&tempf=%.2f&humidity=%d&baromin=%.4f&dewptf=%.2f"
+        "&solarradiation=%.1f&softwaretype=vent_SEW",
+        settings.wuStationID,
+        settings.wuPassword,
+        tempF,
+        (int)(sensorData.hum),
+        baro,
+        dewF,
+        sr
+    );
+
+    // OBVEZNO WiFiClientSecure za HTTPS
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+    http.setTimeout(10000);
+    http.setConnectTimeout(5000);
+    http.begin(client, url);  // NE http.begin(url) — ne deluje za https://
+
+    int httpCode = http.GET();
+    String payload = "";
+    if (httpCode == 200) payload = http.getString();
+    http.end();
+
+    bool success = (httpCode == 200 && payload.indexOf("success") >= 0);
+    if (success) {
+        wuLastStatus = "OK " + _getCloudTimestamp();
+        LOG_INFO("WU", "Upload OK: tempF=%.1f hum=%d baro=%.4f solarrad=%.1f",
+                 tempF, (int)sensorData.hum, baro, sr);
+    } else {
+        wuLastStatus = "ERR " + String(httpCode);
+        LOG_WARN("WU", "Upload FAILED: HTTP %d payload='%s'", httpCode, payload.c_str());
+    }
+    return success;
 }

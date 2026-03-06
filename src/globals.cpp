@@ -83,6 +83,12 @@ bool retryAttempted                = false;
 unsigned long lastMainCycleMs  = 0;
 int           currentGraphHours = 4;   // privzeto: 4h okno
 
+// --- Cloud uploads: timing in status ---
+unsigned long lastWcUploadMs = 0;
+unsigned long lastWuUploadMs = 0;
+String wcLastStatus = "disabled";
+String wuLastStatus = "disabled";
+
 // --- Pending WiFi reconnect (DEW pristop) ---
 // Postavi: http.cpp POST /api/settings ob spremembi unitId
 // Bere:    main.cpp loop() — po 500ms kliče WiFi.config + connectWifi()
@@ -132,6 +138,15 @@ static void initDefaults() {
     settings.sendIntervalSec  = SETTINGS_DEFAULT_SEND_INTERVAL;
     settings.readIntervalSec  = SETTINGS_DEFAULT_READ_INTERVAL;
     settings.videoKeepDays    = 7;
+    
+    // Cloud uploads
+    memset(settings.wcWid,       0, sizeof(settings.wcWid));
+    memset(settings.wcKey,       0, sizeof(settings.wcKey));
+    settings.wcIntervalMin = 0;
+    memset(settings.wuStationID, 0, sizeof(settings.wuStationID));
+    memset(settings.wuPassword,  0, sizeof(settings.wuPassword));
+    settings.wuIntervalMin = 0;
+    
     settings.reserved1 = settings.reserved2 = 0.0f;
     settings.reservedBool1 = false;
 
@@ -246,6 +261,10 @@ void initGlobals() {
     retryAttempted       = false;
     lastMainCycleMs      = 0;
     currentGraphHours    = 4;
+    
+    // Cloud uploads timing
+    lastWcUploadMs = 0;
+    lastWuUploadMs = 0;
 
     sdMutex = xSemaphoreCreateMutex();
     if (!sdMutex) LOG_ERROR("Globals", "SD mutex failed!");

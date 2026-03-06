@@ -48,8 +48,14 @@ void updateWeather();           // Klic iz main loop (preverja interval)
 bool fetchWeatherNow();         // Takojšnje branje (vrne true = uspeh)
 
 // Pomožne za UI
-const char* weatherCodeToStr(int code);   // "Jasno", "Megleno" ...
+const char* weatherCodeToStr(int code);   // "Jasno", "Megleno" ..
 const char* weatherCodeToIcon(int code);  // Simbol za zaslon
 
 #include "lvgl.h"
 const lv_img_dsc_t* weatherCodeToImage(int code);
+
+// --- Cloud uploads ---
+float calcDewPoint(float tempC, float rh);
+float calcSolarRad(float lux);
+bool uploadToWeathercloud();
+bool uploadToWeatherUnderground();

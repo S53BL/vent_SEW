@@ -431,7 +431,7 @@ bool setupServer() {
             for (size_t i = 0; i < len; i++) body += (char)data[i];
             if (index + len != total) return;
 
-            StaticJsonDocument<512> doc;
+            StaticJsonDocument<1024> doc;
             DeserializationError err = deserializeJson(doc, body);
             if (err) {
                 LOG_ERROR("HTTP", "/api/settings JSON error: %s", err.c_str());
@@ -489,6 +489,48 @@ bool setupServer() {
                 if (v <= 1023) { settings.screenBrightness = v; changed = true; }
             }
 
+            // Cloud uploads — Weathercloud
+            if (doc.containsKey("wcWid")) {
+                String v = doc["wcWid"].as<String>();
+                v.trim();
+                strncpy(settings.wcWid, v.c_str(), sizeof(settings.wcWid) - 1);
+                settings.wcWid[sizeof(settings.wcWid) - 1] = '\0';
+                changed = true;
+            }
+            if (doc.containsKey("wcKey")) {
+                String v = doc["wcKey"].as<String>();
+                v.trim();
+                strncpy(settings.wcKey, v.c_str(), sizeof(settings.wcKey) - 1);
+                settings.wcKey[sizeof(settings.wcKey) - 1] = '\0';
+                changed = true;
+            }
+            if (doc.containsKey("wcIntervalMin")) {
+                int v = doc["wcIntervalMin"].as<int>();
+                settings.wcIntervalMin = (uint8_t)constrain(v, 0, 60);
+                changed = true;
+            }
+
+            // Cloud uploads — Weather Underground
+            if (doc.containsKey("wuStationID")) {
+                String v = doc["wuStationID"].as<String>();
+                v.trim();
+                strncpy(settings.wuStationID, v.c_str(), sizeof(settings.wuStationID) - 1);
+                settings.wuStationID[sizeof(settings.wuStationID) - 1] = '\0';
+                changed = true;
+            }
+            if (doc.containsKey("wuPassword")) {
+                String v = doc["wuPassword"].as<String>();
+                v.trim();
+                strncpy(settings.wuPassword, v.c_str(), sizeof(settings.wuPassword) - 1);
+                settings.wuPassword[sizeof(settings.wuPassword) - 1] = '\0';
+                changed = true;
+            }
+            if (doc.containsKey("wuIntervalMin")) {
+                int v = doc["wuIntervalMin"].as<int>();
+                settings.wuIntervalMin = (uint8_t)constrain(v, 0, 60);
+                changed = true;
+            }
+
             if (changed) {
                 saveSettings();
                 LOG_INFO("HTTP", "/api/settings updated: id=%s ip=%s rew=%s sendInt=%d",
@@ -518,8 +560,9 @@ bool setupServer() {
     // --- GET /api/settings -> vrne aktualne nastavitve ---
     // FIX (2026-03-02): ključi usklajeni - vrača "sendInterval"/"readInterval"
     // kar JS v /settings strani prikaže v poljih #sendInterval / #readInterval
+    // FIX (2026-03-06): Povečan buffer 384→768 B, dodani cloud upload parametri
     server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
-        StaticJsonDocument<384> doc;
+        StaticJsonDocument<768> doc;
         doc["unitId"]          = settings.unitId;
         doc["localIP"]         = settings.localIP;
         doc["rewIP"]           = settings.rewIP;
@@ -532,6 +575,14 @@ bool setupServer() {
         doc["screenAlwaysOn"]  = settings.screenAlwaysOn;
         doc["screenBrightness"]= settings.screenBrightness;
         doc["videoKeepDays"]   = settings.videoKeepDays;
+        // Cloud uploads - Weathercloud
+        doc["wcWid"]           = settings.wcWid;
+        doc["wcKey"]           = settings.wcKey;
+        doc["wcIntervalMin"]   = settings.wcIntervalMin;
+        // Cloud uploads - Weather Underground
+        doc["wuStationID"]     = settings.wuStationID;
+        doc["wuPassword"]      = settings.wuPassword;
+        doc["wuIntervalMin"]   = settings.wuIntervalMin;
         String resp;
         serializeJsonPretty(doc, resp);
         request->send(200, "application/json", resp);

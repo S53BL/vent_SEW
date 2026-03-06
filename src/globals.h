@@ -159,6 +159,15 @@ struct Settings {
     // --- Video hranjenje ---
     uint8_t videoKeepDays;  // Privzeto: 7 (dni hranjenja posnetkov)
 
+    // --- Cloud uploads (NOVO) ---
+    char     wcWid[24];          // Weathercloud Device ID
+    char     wcKey[36];          // Weathercloud Key
+    uint8_t  wcIntervalMin;      // WC interval [min], 0 = onemogočeno
+
+    char     wuStationID[16];    // Weather Underground Station ID
+    char     wuPassword[36];     // Weather Underground API Key
+    uint8_t  wuIntervalMin;      // WU interval [min], 0 = onemogočeno
+
     // --- Rezerva ---
     float reserved1;
     float reserved2;
@@ -181,6 +190,13 @@ struct Settings {
 #define SETTINGS_DEFAULT_BRIGHTNESS     512
 #define SETTINGS_DEFAULT_SEND_INTERVAL  180
 #define SETTINGS_DEFAULT_READ_INTERVAL  30
+
+#define SETTINGS_DEFAULT_WC_WID          ""
+#define SETTINGS_DEFAULT_WC_KEY          ""
+#define SETTINGS_DEFAULT_WC_INTERVAL     0
+#define SETTINGS_DEFAULT_WU_STATION_ID   ""
+#define SETTINGS_DEFAULT_WU_PASSWORD     ""
+#define SETTINGS_DEFAULT_WU_INTERVAL     0
 
 // =============================================================================
 // GLOBALNE SPREMENLJIVKE - extern deklaracije
@@ -254,6 +270,12 @@ extern bool retryAttempted;
 // --- Graf: glavna 3-minutna zanka ---
 extern unsigned long lastMainCycleMs;  // čas zadnjega 3-min cikla
 extern int           currentGraphHours; // trenutno prikazano časovno okno (2/4/8/16/24)
+
+// --- Cloud uploads: timing in status ---
+extern unsigned long lastWcUploadMs;
+extern unsigned long lastWuUploadMs;
+extern String wcLastStatus;
+extern String wuLastStatus;
 
 // --- Logging (definirano v logging.cpp, ne v globals.cpp!) ---
 // POZOR: logBuffer in loggingInitialized sta definirani v logging.cpp
