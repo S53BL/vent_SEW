@@ -272,7 +272,7 @@ bool uploadToWeathercloud() {
     snprintf(url, sizeof(url),
         "http://api.weathercloud.net/v01/set"
         "?wid=%s&key=%s"
-        "&temp=%.1f&hum=%d&bar=%.1f&dew=%.1f&solarrad=%.1f"
+        "&temp=%d&hum=%d&bar=%d&dew=%d&solarrad=%d"
         "&ver=1.5&type=201",
         settings.wcWid,
         settings.wcKey,
@@ -282,6 +282,8 @@ bool uploadToWeathercloud() {
         (int)(dew              * 10.0f),
         (int)(sr               * 10.0f)
     );
+
+    LOG_DEBUG("WC", "URL: %s", url); // DEBUG - preveri pravilnost URL-ja pred pošiljanjem
 
     HTTPClient http;
     http.setTimeout(10000);
@@ -352,6 +354,8 @@ bool uploadToWeatherUnderground() {
     );
 
     // OBVEZNO WiFiClientSecure za HTTPS
+    LOG_DEBUG("WU", "URL: %s", url); // DEBUG - preveri pravilnost URL-ja pred pošiljanjem
+
     WiFiClientSecure client;
     client.setInsecure();
 
