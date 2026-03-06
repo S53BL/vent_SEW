@@ -223,7 +223,7 @@ const lv_img_dsc_t* weatherCodeToImage(int code) {
 }
 
 // =============================================================================
-// CLOUD UPLOADS - pomocne funkcije
+// CLOUD UPLOADS - pomozne funkcije
 // =============================================================================
 
 static String _getCloudTimestamp() {
@@ -276,11 +276,11 @@ bool uploadToWeathercloud() {
         "&ver=1.5&type=201",
         settings.wcWid,
         settings.wcKey,
-        sensorData.temp,
+    (int)(sensorData.temp  * 10.0f),
         (int)(sensorData.hum),
-        sensorData.press,
-        dew,
-        sr
+    (int)(sensorData.press * 10.0f),
+    (int)(dew              * 10.0f),
+    (int)(sr               * 10.0f)
     );
 
     HTTPClient http;
