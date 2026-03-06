@@ -42,7 +42,8 @@ void setupWebEndpoints() {
 
     // HTML strani - vizualni web vmesnik
     server.on("/settings", HTTP_GET, handleSettings);
-    server.on("/sd-list",  HTTP_GET, handleSDList);
+    server.on("/sd",       HTTP_GET, handleSD);
+    server.on("/sd-list",  HTTP_GET, handleSD);   // alias za backwards compatibility
     server.on("/sd-file",  HTTP_GET, handleSDFile);
     server.on("/logs",     HTTP_GET, handleLogs);
     server.on("/motion",   HTTP_GET, handleMotion);

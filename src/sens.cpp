@@ -91,6 +91,13 @@ static uint8_t       stateUpdateCount = 0;  // 0 = čaka na prvo accuracy>=3
 // PIR tracking (za edge detection)
 static bool pirLastState = false;
 
+// RD-04 radar: interrupt flag (ISR postavi, readPIR() pobere)
+static volatile bool radarISRFlag = false;
+
+void IRAM_ATTR onRadarRising() {
+    radarISRFlag = true;
+}
+
 // ============================================================
 // BSEC2 subscription lista
 // ============================================================
@@ -362,11 +369,14 @@ bool initSensors() {
         LOG_WARN("TCS34725", "Not on I2C (0x%02X)", TCS_ADDRESS);
     }
 
-    // --- PIR ---
+    // --- RD-04 Radar (IO18) ---
+    // Pulse-powered mode: kratek HIGH pulz (~100-300ms) ob zaznavi.
+    // Polling na 1s bi zamudil večino pulzov → interrupt na RISING edge.
     pinMode(PIR_PIN, INPUT);
-    pirLastState = (digitalRead(PIR_PIN) == HIGH);
-    LOG_INFO("PIR", "GPIO%d configured (initial=%s)",
-             PIR_PIN, pirLastState ? "HIGH" : "LOW");
+    radarISRFlag = false;
+    pirLastState = false;
+    attachInterrupt(digitalPinToInterrupt(PIR_PIN), onRadarRising, RISING);
+    LOG_INFO("PIR", "RD-04 radar GPIO%d — interrupt RISING attached", PIR_PIN);
 
     // --- BAT ADC ---
     analogSetAttenuation(ADC_11db);
@@ -457,12 +467,11 @@ void readTCS() {
 // --- readPIR() — samo PIR: edge detection, motionCount++ (klic v 1s hitri zanki) ---
 // POZOR: Ne logi vsak klic (kliče se vsako sekundo) — samo ob eventih.
 void readPIR() {
-    bool pirCurrent = (digitalRead(PIR_PIN) == HIGH);
+    // RD-04 pulse mode: RISING edge zaznamo z ISR flagom.
+    // Senzor ne drži HIGH — ni FALLING edge logike.
+    if (radarISRFlag) {
+        radarISRFlag = false;
 
-    if (pirCurrent && !pirLastState) {
-        // RISING EDGE - novo zaznano gibanje
-        // NAJPREJ: shrani predhodni completedMotionTime → previousMotionTime
-        // tako bo oseba, ki se priblíža, videla čas PREDHODNE zaznave (ne "NOW")
         previousMotionTime = completedMotionTime;
         sensorData.motion = true;
         sensorData.motionCount++;
@@ -470,28 +479,21 @@ void readPIR() {
 
         if (sensorData.cameraReady) {
             startMotionRecording();
-            LOG_INFO("PIR", "MOTION detected -> recording triggered (count=%u)",
-                     sensorData.motionCount);
+            LOG_INFO("PIR", "RD-04 MOTION → recording (count=%u)", sensorData.motionCount);
         } else {
-            LOG_INFO("PIR", "MOTION detected (count=%u, camera not ready)",
-                     sensorData.motionCount);
+            LOG_INFO("PIR", "RD-04 MOTION (count=%u, camera not ready)", sensorData.motionCount);
         }
 
-    } else if (pirCurrent && pirLastState) {
-        // Drži HIGH - gibanje se nadaljuje, osvezi timestamp
-        lastMotionMs = millis();
-
-    } else if (!pirCurrent && pirLastState) {
-        // FALLING EDGE — gibanje zaključeno
-        completedMotionTime = time(nullptr);
-        LOG_DEBUG("PIR", "Motion completed at %lu", (unsigned long)completedMotionTime);
-        logMotionEvent(completedMotionTime);
+        // Zapiši event na SD (ob zaznavi, ne ob FALLING edge)
+        time_t ts = time(nullptr);
+        if (ts > 100000) {
+            completedMotionTime = ts;
+            logMotionEvent(ts);
+        }
     }
 
-    pirLastState = pirCurrent;
-
-    // Briši motion flag po 30s brez gibanja (fiksno — settings.readIntervalSec je deprecated)
-    if (!pirCurrent && millis() - lastMotionMs > 30000UL) {
+    // Počisti motion flag po 30s brez zaznave
+    if (sensorData.motion && millis() - lastMotionMs > 30000UL) {
         sensorData.motion = false;
     }
 }
@@ -651,6 +653,9 @@ void resetSensors() {
     sht41Present = bme680Present = tcsPresent = false;
     sht41ErrorCount = bme680ErrorCount = tcsErrorCount = 0;
     pirLastState = false;
+    radarISRFlag = false;
+    detachInterrupt(digitalPinToInterrupt(PIR_PIN));
+    attachInterrupt(digitalPinToInterrupt(PIR_PIN), onRadarRising, RISING);
     newSensorData = false;
     initSensors();
 }

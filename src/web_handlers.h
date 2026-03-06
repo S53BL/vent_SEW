@@ -11,6 +11,7 @@
 void handleRoot(AsyncWebServerRequest* request);
 void handleSettings(AsyncWebServerRequest* request);
 void handleSDList(AsyncWebServerRequest* request);
+void handleSD(AsyncWebServerRequest* request);
 void handleSDFile(AsyncWebServerRequest* request);
 void handleLogs(AsyncWebServerRequest* request);
 void handleDeleteFiles(AsyncWebServerRequest* request);
