@@ -92,6 +92,7 @@ static String navBar() {
            "<a href='/sd'>SD</a>"
            "<a href='/logs'>Logi</a>"
            "<a href='/motion'>Gibanje</a>"
+           "<a href='/update'>OTA</a>"
            "<a href='http://" + String(settings.localIP) + ":81/stream' class='nav-stream' title='Stream kamere' target='_blank'>&#128249;</a>"
            "</nav>";
 }

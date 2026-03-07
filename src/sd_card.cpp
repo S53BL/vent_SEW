@@ -41,12 +41,12 @@ extern SPIClass LCDspi;
 bool initSD() {
     // Skupni SPI bus z LCD - mutex mora obstajati
     if (sdMutex == NULL) {
-        Serial.println("SD: ERROR - sdMutex not initialized!");
+        LOG_ERROR("SD", "initSD: sdMutex not initialized!");
         return false;
     }
 
     if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(500)) != pdTRUE) {
-        Serial.println("SD: Cannot acquire SPI mutex for init");
+        LOG_ERROR("SD", "initSD: cannot acquire SPI mutex");
         return false;
     }
 
@@ -65,7 +65,7 @@ bool initSD() {
 
     if (!ok) {
         xSemaphoreGive(sdMutex);
-        Serial.println("SD: Initialization failed - no card or SPI error");
+        LOG_ERROR("SD", "initSD: SD.begin() failed - no card or SPI error");
         sensorData.err |= ERR_SD;
         return false;
     }
@@ -73,7 +73,7 @@ bool initSD() {
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
         xSemaphoreGive(sdMutex);
-        Serial.println("SD: No card detected");
+        LOG_ERROR("SD", "initSD: no card detected (CARD_NONE)");
         sensorData.err |= ERR_SD;
         return false;
     }
@@ -84,8 +84,8 @@ bool initSD() {
     xSemaphoreGive(sdMutex);
 
     sensorData.err &= ~ERR_SD;
-    Serial.printf("SD: OK - type=%d size=%lluMB free=%lluMB\n",
-                  cardType, cardSize, cardFree);
+    LOG_INFO("SD", "initSD OK: type=%d size=%lluMB free=%lluMB",
+             cardType, cardSize, cardFree);
     return true;
 }
 
