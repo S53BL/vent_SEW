@@ -96,6 +96,8 @@ private:
     uint32_t _avihFrameCountOffset;
     uint32_t _strhLengthOffset;
     uint32_t _moviDataOffset;
+    uint32_t _riffSizeOffset;
+    uint32_t _moviSizeOffset;
     AviIndexEntry _index[AVI_MAX_FRAMES];
 
     void writeFourCC(const char* cc);

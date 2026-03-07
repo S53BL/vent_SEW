@@ -951,7 +951,7 @@ void handleGraphs(AsyncWebServerRequest* request) {
 var ch={},raw=[],rng=0,syn=false;
 function oz(c){if(syn)return;syn=true;var mn=c.chart.scales.x.min,mx=c.chart.scales.x.max;['T','H','P','I','L','M'].forEach(function(k){if(ch[k]&&ch[k]!==c.chart)ch[k].zoomScale('x',{min:mn,max:mx},'none');});syn=false;}
 var ZP={zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x',onZoom:oz,onZoomComplete:oz},pan:{enabled:true,mode:'x',onPan:oz,onPanComplete:oz}};
-function xsc(){return{type:'time',time:{tooltipFormat:'HH:mm:ss',displayFormats:{second:'HH:mm:ss',minute:'HH:mm',hour:'HH:mm',day:'d.M.'}},ticks:{color:'#555',maxTicksLimit:8},grid:{color:'#1e1e1e'}};}
+function xsc(){return{type:'time',adapters:{date:{timeZone:'Europe/Ljubljana'}},time:{tooltipFormat:'HH:mm:ss',displayFormats:{second:'HH:mm:ss',minute:'HH:mm',hour:'HH:mm',day:'d.M.'}},ticks:{color:'#555',maxTicksLimit:8},grid:{color:'#1e1e1e'}};}
 function mkLine(id,col,unit,mn,mx){
   var ctx=document.getElementById(id);
   var ys={ticks:{color:'#555',callback:function(v){return v.toFixed(1)+unit;}},grid:{color:'#1e1e1e'}};
@@ -1143,14 +1143,21 @@ static int aviNameToSeconds(const String& name) {
 static String findMatchingAvi(const String& day,
                                const std::vector<String>& aviFiles,
                                time_t eventTs) {
-    struct tm* ti = localtime(&eventTs);
-    int eventSec  = ti->tm_hour * 3600 + ti->tm_min * 60 + ti->tm_sec;
+    // Izvleci sekunde od polnoči iz timestampa — poskusi oba CET in UTC
+    // da ujame tako stare (UTC) kot nove (CET) motion evente v CSV
+    struct tm* ti_utc = gmtime(&eventTs);
+    int eventSecUTC = ti_utc->tm_hour * 3600 + ti_utc->tm_min * 60 + ti_utc->tm_sec;
+    time_t eventTsCET = eventTs + 3600;  // CET = UTC+1
+    struct tm* ti_cet = gmtime(&eventTsCET);
+    int eventSecCET = ti_cet->tm_hour * 3600 + ti_cet->tm_min * 60 + ti_cet->tm_sec;
+
     for (const auto& avi : aviFiles) {
         int aviSec = aviNameToSeconds(avi);
         if (aviSec < 0) continue;
-        // Posnetek se začne PO zaznavi → AVI do 3 min po zaznavi = ujemanje
-        int diff = aviSec - eventSec;
-        if (diff >= 0 && diff <= 180)
+        // Toleranca: AVI začne 0-180s po zaznavi (robustno za oba timezone načina)
+        int diffCET = aviSec - eventSecCET;
+        int diffUTC = aviSec - eventSecUTC;
+        if ((diffCET >= 0 && diffCET <= 180) || (diffUTC >= 0 && diffUTC <= 180))
             return "/video/" + day + "/" + avi;
     }
     return "";
@@ -1397,8 +1404,10 @@ void handleMotion(AsyncWebServerRequest* request) {
                     }
                     html += "<td><a class='file-link' href='/sd-file?name=" + aviPath + "'>"
                             + aviName + "</a> <span class='dim'>(" + fmtBytes(sz) + ")</span></td>";
-                    html += "<td><a class='btn btn-blue' href='/sd-file?name=" + aviPath
-                            + "' download>Download</a></td>";
+                    html += "<td>"
+                            "<a class='btn btn-blue' href='/sd-file?name=" + aviPath + "' download>Download</a>"
+                            "&nbsp;<button class='btn btn-play' onclick='playAvi(\"" + aviPath + "\")'>&#9654; Predvajaj</button>"
+                            "</td>";
                     html += "<td><button class='btn btn-red' onclick='delOne(\""
                             + aviPath + "\")'>Briši</button></td>";
                 } else {
@@ -1463,6 +1472,175 @@ function delOne(name) {
 }
 </script>)MSCRIPT";
     }
+
+    // Modal predvajalnik + JS (doda se samo enkrat na koncu strani)
+    html += R"PLAYER(
+<style>
+.btn-play{background:#1b5e20;color:#fff;border:none;border-radius:5px;
+          padding:7px 14px;cursor:pointer;font-size:13px;}
+.btn-play:hover{background:#2e7d32;}
+#avi-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+           background:rgba(0,0,0,0.88);z-index:999;
+           align-items:center;justify-content:center;flex-direction:column;}
+#avi-modal.open{display:flex;}
+#avi-canvas{background:#000;max-width:95vw;max-height:70vh;}
+#avi-controls{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap;justify-content:center;}
+#avi-info{color:#888;font-size:12px;margin-top:6px;}
+</style>
+
+<div id="avi-modal">
+  <canvas id="avi-canvas" width="800" height="600"></canvas>
+  <div id="avi-controls">
+    <button class="btn btn-blue" id="avi-playpause" onclick="togglePlay()">&#9646;&#9646; Pavza</button>
+    <input type="range" id="avi-seek" min="0" value="0" style="width:220px;">
+    <span id="avi-frm" style="color:#aaa;font-size:12px;">0/0</span>
+    <button class="btn btn-blue" onclick="downloadMp4()">&#8595; MP4</button>
+    <button class="btn btn-red" onclick="closeModal()">&#10005; Zapri</button>
+  </div>
+  <div id="avi-info">Nalagam...</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@4.4.1/build/mp4-muxer.min.js"></script>
+<script>
+var _frames=[], _fi=0, _playing=false, _timer=null, _fps=3;
+
+function closeModal(){
+  clearInterval(_timer); _playing=false;
+  document.getElementById('avi-modal').classList.remove('open');
+  _frames=[]; _fi=0;
+}
+
+function togglePlay(){
+  _playing=!_playing;
+  document.getElementById('avi-playpause').innerHTML=_playing?'&#9646;&#9646; Pavza':'&#9654; Predvajaj';
+  if(_playing) schedNext(); else clearInterval(_timer);
+}
+
+function schedNext(){
+  _timer=setTimeout(function(){
+    if(!_playing||!_frames.length) return;
+    _fi=(_fi+1)%_frames.length;
+    showFrame(_fi);
+    schedNext();
+  }, 1000/_fps);
+}
+
+function showFrame(i){
+  var canvas=document.getElementById('avi-canvas');
+  var ctx=canvas.getContext('2d');
+  var blob=new Blob([_frames[i]],{type:'image/jpeg'});
+  var url=URL.createObjectURL(blob);
+  var img=new Image();
+  img.onload=function(){
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    URL.revokeObjectURL(url);
+  };
+  img.src=url;
+  document.getElementById('avi-seek').value=i;
+  document.getElementById('avi-frm').textContent=(i+1)+'/'+_frames.length;
+}
+
+function extractMjpegFrames(buf){
+  var u8=new Uint8Array(buf), frames=[], i=0;
+  while(i<u8.length-1){
+    if(u8[i]===0xFF&&u8[i+1]===0xD8){
+      var j=i+2;
+      while(j<u8.length-1){
+        if(u8[j]===0xFF&&u8[j+1]===0xD9){j+=2;break;}
+        j++;
+      }
+      frames.push(buf.slice(i,j));
+      i=j;
+    } else { i++; }
+  }
+  return frames;
+}
+
+function playAvi(path){
+  _frames=[]; _fi=0; _playing=false; clearInterval(_timer);
+  var modal=document.getElementById('avi-modal');
+  modal.classList.add('open');
+  document.getElementById('avi-info').textContent='Nalagam '+path+' ...';
+  document.getElementById('avi-playpause').innerHTML='&#9654; Predvajaj';
+
+  fetch('/sd-file?name='+encodeURIComponent(path))
+  .then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.arrayBuffer();
+  })
+  .then(function(buf){
+    _frames=extractMjpegFrames(buf);
+    if(!_frames.length){
+      document.getElementById('avi-info').textContent='Napaka: ni JPEG frameov v datoteki.';
+      return;
+    }
+    var seek=document.getElementById('avi-seek');
+    seek.max=_frames.length-1; seek.value=0;
+    seek.oninput=function(){ _fi=parseInt(this.value); showFrame(_fi); };
+    document.getElementById('avi-info').textContent=
+      _frames.length+' frameov @ '+_fps+' fps = '+(_frames.length/_fps).toFixed(1)+'s  |  '+
+      (buf.byteLength/1024).toFixed(0)+' KB';
+    showFrame(0);
+    togglePlay();
+  })
+  .catch(function(e){
+    document.getElementById('avi-info').textContent='Napaka: '+e.message;
+  });
+}
+
+function downloadMp4(){
+  if(!_frames.length){alert('Najprej naloži posnetek.');return;}
+  var info=document.getElementById('avi-info');
+  info.textContent='Sestavljam MP4...';
+
+  var canvas=document.getElementById('avi-canvas');
+  var muxer=new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video:{ codec:'avc', width:canvas.width, height:canvas.height },
+    fastStart:'in-memory'
+  });
+
+  var encoder=new VideoEncoder({
+    output:function(chunk,meta){ muxer.addVideoChunk(chunk,meta); },
+    error:function(e){ info.textContent='Encoder napaka: '+e; }
+  });
+  encoder.configure({
+    codec:'avc1.42001f', width:canvas.width, height:canvas.height,
+    bitrate:500000, framerate:_fps
+  });
+
+  var ctx=canvas.getContext('2d');
+  var i=0;
+  function encNext(){
+    if(i>=_frames.length){
+      encoder.flush().then(function(){
+        muxer.finalize();
+        var blob=new Blob([muxer.target.buffer],{type:'video/mp4'});
+        var a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);
+        a.download='posnetek.mp4';
+        a.click();
+        info.textContent='MP4 download pripravljen.';
+      });
+      return;
+    }
+    var blob=new Blob([_frames[i]],{type:'image/jpeg'});
+    var url=URL.createObjectURL(blob);
+    var img=new Image();
+    img.onload=function(){
+      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      URL.revokeObjectURL(url);
+      var vf=new VideoFrame(canvas,{timestamp:i*(1000000/_fps)});
+      encoder.encode(vf,{keyFrame:(i%30===0)});
+      vf.close();
+      i++; encNext();
+    };
+    img.src=url;
+  }
+  encNext();
+}
+</script>
+)PLAYER";
 
     html += "</div></body></html>";
     request->send(200, "text/html; charset=utf-8", html);

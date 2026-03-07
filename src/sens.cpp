@@ -484,8 +484,8 @@ void readPIR() {
             LOG_INFO("PIR", "RD-04 MOTION (count=%u, camera not ready)", sensorData.motionCount);
         }
 
-        // Zapiši event na SD (ob zaznavi, ne ob FALLING edge)
-        time_t ts = time(nullptr);
+        // Zapiši event na SD — uporabi myTZ.now() (lokalni CET, enak kot AVI ime)
+        time_t ts = timeSynced ? (time_t)myTZ.now() : (time_t)(millis() / 1000);
         if (ts > 100000) {
             completedMotionTime = ts;
             logMotionEvent(ts);

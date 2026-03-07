@@ -153,8 +153,8 @@ bool AviWriter::open(const char* filename, uint16_t width, uint16_t height, uint
     LOG_INFO("AVI", "Opened %s (%ux%u @ %dfps), header=%u B",
              filename, _width, _height, _fps, _fileSize);
 
-    (void)riffSizeOffset;   // bomo posodobili ob close() z seek
-    (void)moviSizeOffset;
+    _riffSizeOffset = riffSizeOffset;
+    _moviSizeOffset = moviSizeOffset;
     return true;
 }
 
@@ -233,10 +233,11 @@ bool AviWriter::close() {
     _file.seek(_strhLengthOffset);
     _file.write((const uint8_t*)&_frameCount, 4);
 
-    // movi LIST size = (fileSize - idx1 chunk) - movi LIST header (8 bytes) - 4 ('movi' fourcc)
-    // = idx1Offset - _moviDataOffset + 4 (za 'movi' fourcc)
-    uint32_t moviListSize = idx1Offset - (_moviDataOffset - 4); // -4 za 'movi'
-    _file.seek(_moviDataOffset - 8);  // pred LIST size field
+    // movi LIST size: od 'movi' FourCC do konca zadnjega frame chunka
+    // _moviDataOffset kaže na prvi byte ZA 'movi' FourCC
+    // moviListSize vključuje 'movi' FourCC (4B) + vse frame chunke
+    uint32_t moviListSize = (idx1Offset - _moviDataOffset) + 4;
+    _file.seek(_moviDataOffset - 8);  // seek na LIST size field (8B pred 'movi')
     _file.write((const uint8_t*)&moviListSize, 4);
 
     _file.flush();
